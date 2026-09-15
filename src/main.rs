@@ -21,11 +21,12 @@ pub struct App {
 impl App {
     fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.exit {
+            terminal.draw(|frame| self.draw(frame))?;
+
             match crossterm::event::read()? {
                 crossterm::event::Event::Key(key_event) => self.handle_key_event(key_event)?,
                 _ => {}
             }
-            terminal.draw(|frame| self.draw(frame))?;
         }
 
         Ok(())
