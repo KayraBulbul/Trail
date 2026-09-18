@@ -1,7 +1,18 @@
+use std::path::Path;
+
+use rusqlite::{Connection, Result};
+
+use crate::{
+    database::sqlite,
+    types::project::{Project, ProjectStep},
+};
+
 pub struct Input {
     pub input: String,
     pub character_index: usize,
     pub input_mode: InputMode,
+    pub project: Project,
+    pub project_step: ProjectStep,
 }
 
 #[derive(PartialEq)]
@@ -11,11 +22,16 @@ pub enum InputMode {
 }
 
 impl Input {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             input: String::new(),
             input_mode: InputMode::Normal,
             character_index: 0,
+            project: Project {
+                name: None,
+                directory: None,
+            },
+            project_step: ProjectStep::Name,
         }
     }
 
@@ -65,8 +81,58 @@ impl Input {
         self.character_index = 0;
     }
 
-    pub fn submit_project(&mut self) {
+    fn reset_project(&mut self) {
+        self.project.name = None;
+        self.project.directory = None;
+    }
+
+    pub fn reset_all(&mut self) {
         self.input.clear();
         self.reset_cursor();
+        self.reset_project();
+        self.project_step = ProjectStep::Name;
+    }
+
+    pub fn submit_name(&mut self) {
+        if self.input.trim().chars().count() > 0 {
+            self.project.name = Some(self.input.clone());
+        }
+
+        if self.project.directory.is_none() {
+            self.project_step = ProjectStep::Directory;
+        } else {
+            self.project_step = ProjectStep::Confirm;
+        }
+
+        self.input.clear();
+        self.reset_cursor();
+    }
+
+    pub fn submit_directory(&mut self) {
+        if self.input.trim().chars().count() > 0 {
+            self.project.directory = Some(self.input.clone());
+        } else {
+            return;
+        }
+
+        if self.project.name.is_none() {
+            self.project.name = Path::new(&self.input)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+        }
+
+        self.project_step = ProjectStep::Confirm;
+
+        self.input.clear();
+        self.reset_cursor();
+    }
+
+    pub fn submit_project(&mut self, conn: &Connection) -> Result<()> {
+        sqlite::insert_project(conn, &self.project)?;
+
+        self.project_step = ProjectStep::Name;
+        self.reset_project();
+
+        Ok(())
     }
 }
