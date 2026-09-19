@@ -98,12 +98,6 @@ impl Input {
             self.project.name = Some(self.input.clone());
         }
 
-        if self.project.directory.is_none() {
-            self.project_step = ProjectStep::Directory;
-        } else {
-            self.project_step = ProjectStep::Confirm;
-        }
-
         self.input.clear();
         self.reset_cursor();
     }
@@ -111,17 +105,12 @@ impl Input {
     pub fn submit_directory(&mut self) {
         if self.input.trim().chars().count() > 0 {
             self.project.directory = Some(self.input.clone());
-        } else {
-            return;
         }
-
         if self.project.name.is_none() {
             self.project.name = Path::new(&self.input)
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned());
         }
-
-        self.project_step = ProjectStep::Confirm;
 
         self.input.clear();
         self.reset_cursor();

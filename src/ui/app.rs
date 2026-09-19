@@ -14,6 +14,9 @@ use ratatui::{
 use rusqlite::Connection;
 use std::io;
 
+#[cfg(test)]
+mod tests;
+
 pub struct App {
     pub show_project_input: bool,
     pub err: Option<String>,
@@ -44,26 +47,41 @@ impl App {
             if self.show_project_input && text_in.input_mode == InputMode::Editing {
                 match key_event.code {
                     KeyCode::Enter if text_in.project_step == ProjectStep::Name => {
-                        text_in.submit_name()
+                        text_in.submit_name();
+                        if !text_in.project.name.is_none() {
+                            self.err = None;
+                        }
+                        if self.err.is_none() && text_in.project.directory.is_none() {
+                            text_in.project_step = ProjectStep::Directory;
+                        } else if self.err.is_none() {
+                            text_in.project_step = ProjectStep::Confirm;
+                        }
                     }
                     KeyCode::Enter if text_in.project_step == ProjectStep::Directory => {
                         text_in.submit_directory();
-                        if text_in.project.name.is_none() {
+                        if text_in.project.directory.is_none() {
+                            self.err = Some("Directory field needs to be filled.".to_string());
+                        } else if text_in.project.name.is_none() {
                             text_in.project_step = ProjectStep::Name;
                             self.err = Some(
                                 "Couldn't derive a project name. Please enter one.".to_string(),
                             )
                         } else {
+                            text_in.project_step = ProjectStep::Confirm;
                             self.err = None;
                         }
                     }
                     KeyCode::Enter if text_in.project_step == ProjectStep::Confirm => {
                         match text_in.submit_project(conn) {
                             Ok(()) => {
+                                text_in.reset_all();
                                 self.show_project_input = false;
                                 self.err = None;
                             }
-                            Err(error) => self.err = Some(error.to_string()),
+                            Err(error) => {
+                                self.err = Some(format!("{error}. Please try again."));
+                                text_in.project_step = ProjectStep::Name;
+                            }
                         }
                     }
                     KeyCode::Esc => {
