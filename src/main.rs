@@ -1,3 +1,7 @@
+use ratatui::widgets::ListState;
+
+use crate::ui::app::BrowserPane;
+
 mod database;
 mod types;
 mod ui;
@@ -8,6 +12,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = ui::app::App {
         show_project_input: false,
+        projects: Vec::new(),
+        project_selection: ListState::default(),
+        opened_project_id: None,
+        pending_delete_id: None,
+        focused_pane: BrowserPane::Projects,
         err: None,
         exit: false,
     };

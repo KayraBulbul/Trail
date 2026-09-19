@@ -61,3 +61,9 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
 
     project_iter.collect()
 }
+
+pub fn delete_project(conn: &Connection, project_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+
+    Ok(())
+}
