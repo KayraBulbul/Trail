@@ -5,14 +5,14 @@ use rusqlite::{Connection, Result};
 
 use crate::{
     database::sqlite,
-    types::project::{Project, ProjectStep},
+    types::project::{ProjectDraft, ProjectStep},
 };
 
 pub struct Input {
     pub input: String,
     pub character_index: usize,
     pub input_mode: InputMode,
-    pub project: Project,
+    pub project: ProjectDraft,
     pub project_step: ProjectStep,
 }
 
@@ -28,7 +28,7 @@ impl Input {
             input: String::new(),
             input_mode: InputMode::Normal,
             character_index: 0,
-            project: Project {
+            project: ProjectDraft {
                 name: None,
                 directory: None,
             },
