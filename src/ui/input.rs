@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::{env, fs, io};
 
 use rusqlite::{Connection, Result};
 
@@ -77,7 +78,7 @@ impl Input {
         new_cursor_pos.clamp(0, self.input.chars().count())
     }
 
-    const fn reset_cursor(&mut self) {
+    pub const fn reset_cursor(&mut self) {
         self.character_index = 0;
     }
 
@@ -121,6 +122,41 @@ impl Input {
 
         self.project_step = ProjectStep::Name;
         self.reset_project();
+
+        Ok(())
+    }
+
+    pub fn validate_path(&self) -> io::Result<()> {
+        let directory = self.project.directory.as_deref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "Please enter a directory.")
+        })?;
+
+        let path = if directory == "~" || directory.starts_with("~/") {
+            let home = env::home_dir().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Could not determine your home directory.",
+                )
+            })?;
+
+            if directory == "~" {
+                home
+            } else {
+                home.join(&directory[2..])
+            }
+        } else {
+            PathBuf::from(directory)
+        };
+
+        let abs_path = fs::canonicalize(path)?;
+        let attr = fs::metadata(&abs_path)?;
+
+        if !attr.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The selected path is not a directory.",
+            ));
+        }
 
         Ok(())
     }

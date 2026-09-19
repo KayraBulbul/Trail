@@ -67,8 +67,15 @@ impl App {
                                 "Couldn't derive a project name. Please enter one.".to_string(),
                             )
                         } else {
-                            text_in.project_step = ProjectStep::Confirm;
-                            self.err = None;
+                            match text_in.validate_path() {
+                                Ok(()) => {
+                                    text_in.project_step = ProjectStep::Confirm;
+                                    self.err = None;
+                                }
+                                Err(error) => {
+                                    self.err = Some(format!("Couldn't validate path: {error}"));
+                                }
+                            }
                         }
                     }
                     KeyCode::Enter if text_in.project_step == ProjectStep::Confirm => {
