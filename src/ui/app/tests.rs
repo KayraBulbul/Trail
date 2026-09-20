@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    types::project::ProjectStep,
+    types::{project::ProjectStep, update::UpdateStep},
     ui::input::InputMode,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -635,6 +635,68 @@ fn delete_confirmation_uses_original_id_after_list_reorders() {
     assert!(app.pending_project_delete_id.is_none());
 }
 
+fn row_containing(buffer: &Buffer, text: &str) -> u16 {
+    (0..buffer.area.height)
+        .find(|&y| {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            row.contains(text)
+        })
+        .unwrap_or_else(|| panic!("Text missing from rendered screen: {text}"))
+}
+
+#[test]
+fn update_details_wrap_body_and_next() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+    app.opened_project_id = Some("a".into());
+    app.updates.push(Update {
+        id: "update-a".into(),
+        project_id: "a".into(),
+        title: "Progress".into(),
+        body: format!("{}BODY_END", "finished task ".repeat(8)),
+        next: format!("{}NEXT_END", "another task ".repeat(8)),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    });
+
+    for width in [60, 100] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 20)).unwrap();
+        terminal.draw(|frame| app.render(frame, &mut input)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert!(row_containing(buffer, "BODY_END") > row_containing(buffer, "Body:"));
+        assert!(row_containing(buffer, "What to do next:") > row_containing(buffer, "BODY_END"));
+        assert!(row_containing(buffer, "NEXT_END") > row_containing(buffer, "What to do next:"));
+        assert!(row_containing(buffer, "Created at:") > row_containing(buffer, "NEXT_END"));
+    }
+}
+
+#[test]
+fn update_confirmation_wraps_body_and_next() {
+    let (mut app, mut input, _) = setup();
+    app.show_project_input = false;
+    app.show_update_input = true;
+    app.err = Some("Save failed".into());
+    input.update_step = UpdateStep::Confirm;
+    input.update.title = Some("Progress".into());
+    input.update.body = Some(format!("{}BODY_END", "finished task ".repeat(8)));
+    input.update.next = Some(format!("{}NEXT_END", "another task ".repeat(8)));
+
+    for width in [40, 80] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 16)).unwrap();
+        terminal.draw(|frame| app.render(frame, &mut input)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert!(row_containing(buffer, "BODY_END") > row_containing(buffer, "Body:"));
+        assert!(row_containing(buffer, "Next:") > row_containing(buffer, "BODY_END"));
+        assert!(row_containing(buffer, "NEXT_END") > row_containing(buffer, "Next:"));
+        assert_eq!(row_containing(buffer, "Save failed"), 15);
+    }
+}
+
 fn browser_with_updates() -> (App, input::Input, Connection) {
     let (mut app, mut input, conn) = browser();
     seed_projects(&conn);
@@ -648,4 +710,255 @@ fn browser_with_updates() -> (App, input::Input, Connection) {
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     (app, input, conn)
+}
+
+#[test]
+fn opening_selected_update_displays_its_body_without_switching_projects() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.project_selection.select(Some(1));
+    app.update_selection.select(Some(1));
+    app.focused_pane = BrowserPane::Updates;
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+    assert_eq!(app.update_selection.selected(), Some(1));
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+    let text = screen_text(&render_browser(&mut app, &mut input));
+    assert!(text.contains("Body: Older body"));
+    assert!(!text.contains("Body: Latest body"));
+
+    app.focused_pane = BrowserPane::Projects;
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(app.opened_project_id.as_deref(), Some("b"));
+    assert!(app.opened_update_id.is_none());
+    assert_eq!(app.updates.len(), 1);
+    assert_eq!(app.updates[0].id, "beta");
+    assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Beta body"));
+}
+
+#[test]
+fn opening_update_without_selection_does_nothing() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.focused_pane = BrowserPane::Updates;
+    for selected in [None, Some(10)] {
+        app.update_selection.select(selected);
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+        assert!(app.opened_update_id.is_none());
+        assert!(app.focused_pane == BrowserPane::Updates);
+        assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    }
+}
+
+#[test]
+fn project_deletion_clears_updates_only_after_deleting_opened_project() {
+    for (delete_opened, cancel, fail) in [
+        (true, true, false),
+        (true, false, true),
+        (false, false, false),
+        (true, false, false),
+    ] {
+        let (mut app, mut input, conn) = browser_with_updates();
+        app.opened_update_id = Some("older".into());
+        app.update_selection.select(Some(1));
+        if !delete_opened {
+            app.project_selection.select(Some(1));
+        }
+        if fail {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_delete BEFORE DELETE ON projects
+                 BEGIN SELECT RAISE(FAIL, 'forced failure'); END;",
+            )
+            .unwrap();
+        }
+
+        press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+        assert_eq!(app.updates.len(), 2);
+        assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+        press(
+            &mut app,
+            &mut input,
+            &conn,
+            if cancel { KeyCode::Esc } else { KeyCode::Enter },
+        );
+
+        if delete_opened && !cancel && !fail {
+            assert!(app.opened_project_id.is_none());
+            assert!(app.opened_update_id.is_none());
+            assert!(app.updates.is_empty());
+            assert_eq!(app.update_selection.selected(), None);
+            assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
+        } else {
+            assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+            assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+            assert_eq!(app.updates.len(), 2);
+            assert_eq!(app.update_selection.selected(), Some(1));
+            assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Older body"));
+        }
+        assert_eq!(app.err.is_some(), fail);
+    }
+}
+
+#[test]
+fn creating_project_clears_previous_update_state() {
+    let temp = TestDirectory::new();
+    let directory = temp.create_project_directory("New project");
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.opened_update_id = Some("older".into());
+    app.update_selection.select(Some(1));
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
+    submit(&mut app, &mut input, &conn, "New project");
+    submit(&mut app, &mut input, &conn, &directory);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    assert!(app.err.is_none());
+    let created = app.projects.iter().find(|p| p.name == "New project").unwrap();
+    assert_eq!(app.opened_project_id.as_deref(), Some(created.id.as_str()));
+    assert!(app.updates.is_empty());
+    assert!(app.opened_update_id.is_none());
+    assert_eq!(app.update_selection.selected(), None);
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+}
+
+#[test]
+fn create_update_validates_required_fields_and_saves_to_opened_project() {
+    for next in ["", "Write tests"] {
+        let (mut app, mut input, conn) = browser_with_updates();
+        press(&mut app, &mut input, &conn, KeyCode::Down);
+        press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+
+        for (step, value) in [
+            (UpdateStep::Title, "Progress"),
+            (UpdateStep::Body, "Fixed a bug"),
+        ] {
+            submit(&mut app, &mut input, &conn, "   ");
+            assert!(input.update_step == step);
+            assert!(app.err.is_some());
+            assert!(
+                screen_text(&render_browser(&mut app, &mut input))
+                    .contains(app.err.as_deref().unwrap())
+            );
+            submit(&mut app, &mut input, &conn, value);
+            assert!(app.err.is_none());
+        }
+        submit(&mut app, &mut input, &conn, next);
+        assert!(input.update_step == UpdateStep::Confirm);
+        let confirmation = screen_text(&render_browser(&mut app, &mut input));
+        assert!(confirmation.contains("Title: Progress"));
+        assert!(confirmation.contains("Body: Fixed a bug"));
+        assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+
+        for key in [KeyCode::Char('q'), KeyCode::Backspace] {
+            press(&mut app, &mut input, &conn, key);
+        }
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+        let saved = sqlite::get_updates(&conn, "a").unwrap();
+        assert_eq!(saved.len(), 3);
+        let update = saved.iter().find(|u| u.title == "Progress").unwrap();
+        assert_eq!(update.body, "Fixed a bug");
+        assert_eq!(update.next, if next.is_empty() { "None" } else { next });
+        assert_eq!(sqlite::get_updates(&conn, "b").unwrap().len(), 1);
+        assert_eq!(app.opened_update_id.as_deref(), Some(update.id.as_str()));
+        assert_eq!(
+            app.updates[app.update_selection.selected().unwrap()].id,
+            update.id
+        );
+        assert!(!app.show_update_input);
+        assert!(!app.exit);
+        assert!(app.err.is_none());
+        assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Fixed a bug"));
+    }
+}
+
+#[test]
+fn cancel_update_at_each_step_leaves_saved_updates_and_reopens_empty() {
+    for completed_fields in 0..=3 {
+        let (mut app, mut input, conn) = browser_with_updates();
+        press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+        for field in ["Draft title", "Draft body", "Draft next"]
+            .iter()
+            .take(completed_fields)
+        {
+            submit(&mut app, &mut input, &conn, field);
+        }
+        press(&mut app, &mut input, &conn, KeyCode::Char('x'));
+        press(&mut app, &mut input, &conn, KeyCode::Esc);
+
+        assert!(!app.show_update_input);
+        assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+        assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Latest body"));
+        press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+        assert!(input.update_step == UpdateStep::Title);
+        assert!(input.input.is_empty());
+        assert_eq!(input.character_index, 0);
+        assert!(input.update.title.is_none());
+        assert!(input.update.body.is_none());
+        assert!(input.update.next.is_none());
+        assert!(app.err.is_none());
+    }
+}
+
+#[test]
+fn failed_update_save_preserves_draft_for_retry_without_duplicate_insert() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_update BEFORE INSERT ON updates
+         BEGIN SELECT RAISE(FAIL, 'forced save failure'); END;",
+    )
+    .unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    for field in ["Retry title", "Retry body", "Retry next"] {
+        submit(&mut app, &mut input, &conn, field);
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    assert!(app.show_update_input);
+    assert!(screen_text(&render_browser(&mut app, &mut input)).contains("forced save failure"));
+    assert_eq!(input.update.title.as_deref(), Some("Retry title"));
+    assert_eq!(input.update.body.as_deref(), Some("Retry body"));
+    assert_eq!(input.update.next.as_deref(), Some("Retry next"));
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+
+    conn.execute_batch("DROP TRIGGER fail_update").unwrap();
+    // Keep the preserved fields and confirm the retry.
+    for _ in 0..4 {
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+    }
+    assert!(app.err.is_none());
+    assert!(!app.show_update_input);
+    let saved = sqlite::get_updates(&conn, "a").unwrap();
+    assert_eq!(saved.len(), 3);
+    let update = saved.iter().find(|u| u.title == "Retry title").unwrap();
+    assert_eq!(update.body, "Retry body");
+    assert_eq!(update.next, "Retry next");
+}
+
+#[test]
+fn update_navigation_uses_update_count_and_stops_at_boundaries() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    conn.execute("DELETE FROM projects WHERE id = 'b'", [])
+        .unwrap();
+    app.reload_projects(&conn).unwrap();
+    for _ in 0..2 {
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+            &mut input,
+            &conn,
+        )
+        .unwrap();
+    }
+    for (key, expected) in [
+        (KeyCode::Up, 0),
+        (KeyCode::Down, 1),
+        (KeyCode::Down, 1),
+        (KeyCode::Char('k'), 0),
+        (KeyCode::Char('j'), 1),
+    ] {
+        press(&mut app, &mut input, &conn, key);
+        assert_eq!(app.update_selection.selected(), Some(expected));
+        assert_eq!(app.project_selection.selected(), Some(0));
+    }
 }
