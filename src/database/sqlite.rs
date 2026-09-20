@@ -1,6 +1,9 @@
 use std::io;
 
-use crate::types::project::{Project, ProjectDraft};
+use crate::types::{
+    project::{Project, ProjectDraft},
+    update::{Update, UpdateDraft},
+};
 use rusqlite::{Connection, Result};
 use uuid::Uuid;
 
@@ -28,6 +31,19 @@ pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
         (),
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS updates (
+              id TEXT PRIMARY KEY,
+              project_id TEXT,
+              title TEXT NOT NULL,
+              body TEXT NOT NULL,
+              created_at TEXT DEFAULT (datetime('now')),
+              updated_at TEXT DEFAULT (datetime('now')),
+              FOREIGN KEY(project_id) REFERENCES projects(id)
+        )",
+        (),
+    )?;
+
     Ok(conn)
 }
 
@@ -45,7 +61,7 @@ pub fn insert_project(conn: &Connection, project: &ProjectDraft) -> Result<()> {
 pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, directory, created_at, updated_at
-              FROM projects 
+              FROM projects
               ORDER BY updated_at DESC, id ASC",
     )?;
 
@@ -64,6 +80,53 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
 
 pub fn delete_project(conn: &Connection, project_id: &str) -> Result<()> {
     conn.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+
+    Ok(())
+}
+
+pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<()> {
+    let uuid = Uuid::new_v4();
+
+    conn.execute(
+        "INSERT INTO updates (id, project_id, title, body) VALUES (?1, ?2, ?3, ?4)",
+        (
+            uuid.to_string(),
+            &update.project_id,
+            &update.title,
+            &update.body,
+        ),
+    )?;
+
+    Ok(())
+}
+
+pub fn get_updates(conn: &Connection) -> Result<Vec<Update>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, title, body, created_at, updated_at
+              FROM updates
+              ORDER BY updated_at DESC, id ASC",
+    )?;
+
+    let update_iter = stmt.query_map([], |row| {
+        Ok(Update {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            body: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+        })
+    })?;
+
+    update_iter.collect()
+}
+
+pub fn edit_update(conn: &Connection) -> Result<()> {
+    todo!()
+}
+
+pub fn delete_update(conn: &Connection, update_id: &str) -> Result<()> {
+    conn.execute("DELETE FROM updates WHERE id = ?1", [update_id])?;
 
     Ok(())
 }
