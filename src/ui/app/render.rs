@@ -19,11 +19,11 @@ impl App {
                 || text_in.project_step == ProjectStep::Directory)
         {
             let layout = Layout::vertical([
-                Constraint::Length(1),
                 Constraint::Length(3),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ]);
-            let [help_area, input_area, error_area] = frame.area().layout(&layout);
+            let [input_area, help_area, error_area] = frame.area().layout(&layout);
 
             let (msg, style) = match text_in.project_step {
                 ProjectStep::Name => (
@@ -78,11 +78,11 @@ impl App {
                 || text_in.update_step == UpdateStep::Next)
         {
             let layout = Layout::vertical([
-                Constraint::Length(1),
                 Constraint::Length(3),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ]);
-            let [help_area, input_area, error_area] = frame.area().layout(&layout);
+            let [input_area, help_area, error_area] = frame.area().layout(&layout);
 
             let (msg, style) = match text_in.update_step {
                 UpdateStep::Title => (
@@ -362,8 +362,9 @@ impl App {
                     );
 
                     let text = Text::from(Line::from(msg)).patch_style(style);
-                    let project_message =
-                        Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::bordered().title("Latest Update"));
+                    let project_message = Paragraph::new(text)
+                        .wrap(Wrap { trim: false })
+                        .block(Block::bordered().title("Latest Update"));
                     frame.render_widget(project_message, project_area);
                 }
             }
