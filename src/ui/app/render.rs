@@ -366,7 +366,7 @@ impl App {
 
             let list = List::new(updates).highlight_symbol("> ").block(
                 Block::bordered()
-                    .title("Projects")
+                    .title("Updates")
                     .border_style(Style::default().fg(updates_border_colour)),
             );
             frame.render_stateful_widget(list, update_area, &mut self.update_selection);
