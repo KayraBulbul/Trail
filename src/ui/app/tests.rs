@@ -1,6 +1,10 @@
 use super::*;
-use crossterm::event::{KeyEvent, KeyModifiers};
-use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+use crate::{
+    types::project::ProjectStep,
+    ui::input::InputMode,
+};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Color};
 use std::{fs, path::PathBuf};
 
 struct TestDirectory(PathBuf);
@@ -29,10 +33,14 @@ fn setup() -> (App, input::Input, Connection) {
     (
         App {
             show_project_input: true,
+            show_update_input: false,
             projects: Vec::new(),
+            updates: Vec::new(),
             project_selection: ListState::default(),
+            update_selection: ListState::default(),
             opened_project_id: None,
-            pending_delete_id: None,
+            opened_update_id: None,
+            pending_project_delete_id: None,
             focused_pane: BrowserPane::Projects,
             err: None,
             exit: false,
@@ -185,7 +193,7 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     let temp_dir = TestDirectory::new();
     let trail_directory = temp_dir.create_project_directory("Trail");
     let (mut app, mut input, conn) = setup();
-    create_schema(&conn);
+    sqlite::initialize_schema(&conn).unwrap();
     submit(&mut app, &mut input, &conn, "Trail");
     submit(&mut app, &mut input, &conn, &trail_directory);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
@@ -246,23 +254,11 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     assert_eq!(count, 1);
 }
 
-fn create_schema(conn: &Connection) {
-    conn.execute_batch(
-        "CREATE TABLE projects (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            directory TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        );",
-    )
-    .unwrap();
-}
-
 fn browser() -> (App, input::Input, Connection) {
-    let (mut app, input, conn) = setup();
+    let (mut app, mut input, conn) = setup();
     app.show_project_input = false;
-    create_schema(&conn);
+    input.input_mode = InputMode::Normal;
+    sqlite::initialize_schema(&conn).unwrap();
     (app, input, conn)
 }
 
@@ -296,12 +292,14 @@ fn empty_browser_ignores_navigation_and_enter() {
         KeyCode::Char('j'),
         KeyCode::Char('k'),
         KeyCode::Enter,
+        KeyCode::Char('a'),
     ] {
         press(&mut app, &mut input, &conn, key);
         assert_eq!(app.project_selection.selected(), None);
         assert_eq!(app.opened_project_id, None);
     }
     assert!(!app.show_project_input);
+    assert!(!app.show_update_input);
     assert!(!app.exit);
 }
 
@@ -328,9 +326,7 @@ fn browser_navigation_stops_at_list_boundaries() {
 
 #[test]
 fn opened_project_survives_navigation_and_pane_switches() {
-    let (mut app, mut input, conn) = browser();
-    seed_projects(&conn);
-    app.reload_projects(&conn).unwrap();
+    let (mut app, mut input, conn) = browser_with_updates();
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     assert_eq!(app.opened_project_id.as_deref(), Some("b"));
@@ -339,12 +335,12 @@ fn opened_project_survives_navigation_and_pane_switches() {
     assert_eq!(app.opened_project_id.as_deref(), Some("b"));
 
     let buffer = render_browser(&mut app, &mut input);
-    assert!(screen_text(&buffer).contains("Name: Beta"));
+    assert!(screen_text(&buffer).contains("Body: Beta body"));
     assert_eq!(buffer[(0, 0)].fg, Color::Yellow);
-    assert_eq!(buffer[(30, 0)].fg, Color::Reset);
+    assert_eq!(buffer[(20, 0)].fg, Color::Reset);
 
     for (key, pane, left, right) in [
-        ('l', BrowserPane::Project, Color::Reset, Color::Yellow),
+        ('l', BrowserPane::LatestUpdate, Color::Reset, Color::Yellow),
         ('h', BrowserPane::Projects, Color::Yellow, Color::Reset),
     ] {
         app.handle_key_event(
@@ -356,12 +352,12 @@ fn opened_project_survives_navigation_and_pane_switches() {
         assert!(app.focused_pane == pane);
         let buffer = render_browser(&mut app, &mut input);
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(30, 0)].symbol(), "┌");
+        assert_eq!(buffer[(20, 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 0)].fg, left);
-        assert_eq!(buffer[(30, 0)].fg, right);
+        assert_eq!(buffer[(20, 0)].fg, right);
         assert_eq!(app.opened_project_id.as_deref(), Some("b"));
 
-        if app.focused_pane == BrowserPane::Project {
+        if app.focused_pane == BrowserPane::LatestUpdate {
             for key in [
                 KeyCode::Down,
                 KeyCode::Up,
@@ -542,9 +538,7 @@ fn deleting_last_project_clears_browser_selection() {
 
 #[test]
 fn failed_delete_preserves_browser_and_displays_error() {
-    let (mut app, mut input, conn) = browser();
-    seed_projects(&conn);
-    app.reload_projects(&conn).unwrap();
+    let (mut app, mut input, conn) = browser_with_updates();
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     conn.execute_batch(
@@ -574,7 +568,7 @@ fn failed_delete_preserves_browser_and_displays_error() {
     );
     let buffer = render_browser(&mut app, &mut input);
     assert!(screen_text(&buffer).contains(app.err.as_deref().unwrap()));
-    assert!(screen_text(&buffer).contains("Name: Beta"));
+    assert!(screen_text(&buffer).contains("Body: Beta body"));
     assert_eq!(buffer[(0, 10)].fg, Color::Red);
 }
 
@@ -586,7 +580,7 @@ fn delete_confirmation_blocks_browser_keys_and_escape_cancels() {
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     press(&mut app, &mut input, &conn, KeyCode::Char('D'));
 
-    assert_eq!(app.pending_delete_id.as_deref(), Some("a"));
+    assert_eq!(app.pending_project_delete_id.as_deref(), Some("a"));
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 2);
     let buffer = render_browser(&mut app, &mut input);
     let text = screen_text(&buffer);
@@ -614,14 +608,14 @@ fn delete_confirmation_blocks_browser_keys_and_escape_cancels() {
     )
     .unwrap();
     assert_eq!(app.project_selection.selected(), Some(0));
-    assert_eq!(app.pending_delete_id.as_deref(), Some("a"));
+    assert_eq!(app.pending_project_delete_id.as_deref(), Some("a"));
     assert_eq!(app.opened_project_id.as_deref(), Some("a"));
     assert!(app.focused_pane == BrowserPane::Projects);
     assert!(!app.show_project_input);
     assert!(!app.exit);
 
     press(&mut app, &mut input, &conn, KeyCode::Esc);
-    assert!(app.pending_delete_id.is_none());
+    assert!(app.pending_project_delete_id.is_none());
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 2);
     assert!(!screen_text(&render_browser(&mut app, &mut input)).contains("Delete project?"));
 }
@@ -638,5 +632,20 @@ fn delete_confirmation_uses_original_id_after_list_reorders() {
     let saved = sqlite::get_projects(&conn).unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].id, "b");
-    assert!(app.pending_delete_id.is_none());
+    assert!(app.pending_project_delete_id.is_none());
+}
+
+fn browser_with_updates() -> (App, input::Input, Connection) {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    conn.execute_batch(
+        "INSERT INTO updates (id, project_id, title, body, next, updated_at) VALUES
+        ('latest', 'a', 'Latest', 'Latest body', 'Next', '2026-09-20 00:00:00'),
+        ('older', 'a', 'Older', 'Older body', 'Next', '2026-09-19 00:00:00'),
+        ('beta', 'b', 'Beta progress', 'Beta body', 'Next', '2026-09-19 00:00:00');",
+    )
+    .unwrap();
+    app.reload_projects(&conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    (app, input, conn)
 }

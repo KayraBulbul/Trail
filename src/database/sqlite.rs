@@ -19,7 +19,12 @@ pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&trail_dir)?;
 
     let conn = Connection::open(trail_dir.join("trail.db"))?;
+    initialize_schema(&conn)?;
 
+    Ok(conn)
+}
+
+pub fn initialize_schema(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
@@ -37,25 +42,26 @@ pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
               project_id TEXT,
               title TEXT NOT NULL,
               body TEXT NOT NULL,
+              next TEXT NOT NULL,
               created_at TEXT DEFAULT (datetime('now')),
               updated_at TEXT DEFAULT (datetime('now')),
-              FOREIGN KEY(project_id) REFERENCES projects(id)
+              FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         )",
         (),
     )?;
 
-    Ok(conn)
+    Ok(())
 }
 
-pub fn insert_project(conn: &Connection, project: &ProjectDraft) -> Result<()> {
-    let uuid = Uuid::new_v4();
+pub fn insert_project(conn: &Connection, project: &ProjectDraft) -> Result<String> {
+    let uuid = Uuid::new_v4().to_string();
 
     conn.execute(
         "INSERT INTO projects (id, name, directory) VALUES (?1, ?2, ?3)",
-        (uuid.to_string(), &project.name, &project.directory),
+        (&uuid, &project.name, &project.directory),
     )?;
 
-    Ok(())
+    Ok(uuid)
 }
 
 pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
@@ -84,37 +90,40 @@ pub fn delete_project(conn: &Connection, project_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<()> {
-    let uuid = Uuid::new_v4();
+pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<String> {
+    let uuid = Uuid::new_v4().to_string();
 
     conn.execute(
-        "INSERT INTO updates (id, project_id, title, body) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO updates (id, project_id, title, body, next) VALUES (?1, ?2, ?3, ?4, ?5)",
         (
-            uuid.to_string(),
+            &uuid,
             &update.project_id,
             &update.title,
             &update.body,
+            &update.next,
         ),
     )?;
 
-    Ok(())
+    Ok(uuid)
 }
 
-pub fn get_updates(conn: &Connection) -> Result<Vec<Update>> {
+pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, title, body, created_at, updated_at
+        "SELECT id, project_id, title, body, next, created_at, updated_at
               FROM updates
+              WHERE project_id = ?1
               ORDER BY updated_at DESC, id ASC",
     )?;
 
-    let update_iter = stmt.query_map([], |row| {
+    let update_iter = stmt.query_map([project_id], |row| {
         Ok(Update {
             id: row.get(0)?,
             project_id: row.get(1)?,
             title: row.get(2)?,
             body: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+            next: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
         })
     })?;
 

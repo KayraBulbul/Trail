@@ -85,6 +85,7 @@ impl App {
                                 self.project_selection.select(idx);
 
                                 self.opened_project_id = Some(project_id);
+                                self.clear_updates();
                                 self.focused_pane = BrowserPane::LatestUpdate;
                             }
                             Err(error) => {
@@ -220,14 +221,50 @@ impl App {
 
                         self.project_selection.select(Some(index));
                     }
+                    // Down on updates list
+                    KeyCode::Char('j') | KeyCode::Down
+                        if self.focused_pane == BrowserPane::Updates
+                            && !self.updates.is_empty() =>
+                    {
+                        let index = match self.update_selection.selected() {
+                            Some(index) => index.saturating_add(1).min(self.updates.len() - 1),
+                            None => 0,
+                        };
+
+                        self.update_selection.select(Some(index));
+                    }
+                    // Up on projects list
+                    KeyCode::Char('k') | KeyCode::Up
+                        if self.focused_pane == BrowserPane::Updates
+                            && !self.updates.is_empty() =>
+                    {
+                        let index = match self.update_selection.selected() {
+                            Some(index) => index.saturating_sub(1),
+                            None => 0,
+                        };
+
+                        self.update_selection.select(Some(index));
+                    }
+                    // Open update
+                    KeyCode::Enter if self.focused_pane == BrowserPane::Updates => {
+                        if let Some(update) = self
+                            .update_selection
+                            .selected()
+                            .and_then(|index| self.updates.get(index))
+                        {
+                            self.opened_update_id = Some(update.id.clone());
+                            self.focused_pane = BrowserPane::LatestUpdate;
+                        }
+                    }
                     // Open project
-                    KeyCode::Enter => {
+                    KeyCode::Enter if self.focused_pane == BrowserPane::Projects => {
                         if let Some(project) = self
                             .project_selection
                             .selected()
                             .and_then(|index| self.projects.get(index))
                         {
                             self.opened_project_id = Some(project.id.clone());
+                            self.clear_updates();
                             if let Err(error) = self.reload_updates(conn) {
                                 self.err = Some(format!(
                                     "Error retrieving updates for this project: {error}"

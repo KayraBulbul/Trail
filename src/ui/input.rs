@@ -3,6 +3,7 @@ use std::{env, fs, io};
 
 use rusqlite::{Connection, Result};
 
+use crate::types::update::{UpdateDraft, UpdateStep};
 use crate::{
     database::sqlite,
     types::project::{ProjectDraft, ProjectStep},
@@ -14,6 +15,8 @@ pub struct Input {
     pub input_mode: InputMode,
     pub project: ProjectDraft,
     pub project_step: ProjectStep,
+    pub update: UpdateDraft,
+    pub update_step: UpdateStep,
 }
 
 #[derive(PartialEq)]
@@ -33,6 +36,13 @@ impl Input {
                 directory: None,
             },
             project_step: ProjectStep::Name,
+            update: UpdateDraft {
+                title: None,
+                project_id: None,
+                body: None,
+                next: None,
+            },
+            update_step: UpdateStep::Title,
         }
     }
 
@@ -87,11 +97,20 @@ impl Input {
         self.project.directory = None;
     }
 
+    fn reset_update(&mut self) {
+        self.update.title = None;
+        self.update.project_id = None;
+        self.update.body = None;
+        self.update.next = None;
+    }
+
     pub fn reset_all(&mut self) {
         self.input.clear();
         self.reset_cursor();
         self.reset_project();
+        self.reset_update();
         self.project_step = ProjectStep::Name;
+        self.update_step = UpdateStep::Title;
     }
 
     pub fn submit_name(&mut self) {
@@ -117,13 +136,13 @@ impl Input {
         self.reset_cursor();
     }
 
-    pub fn submit_project(&mut self, conn: &Connection) -> Result<()> {
-        sqlite::insert_project(conn, &self.project)?;
+    pub fn submit_project(&mut self, conn: &Connection) -> Result<String> {
+        let id = sqlite::insert_project(conn, &self.project)?;
 
         self.project_step = ProjectStep::Name;
         self.reset_project();
 
-        Ok(())
+        Ok(id)
     }
 
     pub fn validate_path(&self) -> io::Result<()> {
@@ -159,5 +178,46 @@ impl Input {
         }
 
         Ok(())
+    }
+
+    pub fn submit_title(&mut self) {
+        if self.input.trim().chars().count() > 0 {
+            self.update.title = Some(self.input.clone());
+        }
+
+        self.input.clear();
+        self.reset_cursor();
+    }
+
+    pub fn submit_body(&mut self) {
+        if self.input.trim().chars().count() > 0 {
+            self.update.body = Some(self.input.clone());
+        }
+
+        self.input.clear();
+        self.reset_cursor();
+    }
+
+    pub fn submit_next(&mut self) {
+        if self.input.trim().chars().count() > 0 {
+            self.update.next = Some(self.input.clone());
+        }
+
+        if self.update.next.is_none() {
+            self.update.next = Some(String::from("None"));
+        }
+
+        self.input.clear();
+        self.reset_cursor();
+    }
+
+    pub fn submit_update(&mut self, conn: &Connection, project_id: String) -> Result<String> {
+        self.update.project_id = Some(project_id.clone());
+        let id = sqlite::insert_update(conn, &self.update)?;
+
+        self.update_step = UpdateStep::Title;
+        self.reset_update();
+
+        Ok(id)
     }
 }
