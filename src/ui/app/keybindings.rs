@@ -270,6 +270,11 @@ impl App {
                                     "Error retrieving updates for this project: {error}"
                                 ))
                             }
+                            if !self.updates.is_empty() {
+                                self.focused_pane = BrowserPane::LatestUpdate;
+                            } else {
+                                self.focused_pane = BrowserPane::Updates;
+                            }
                         }
                     }
                     // Left pane
