@@ -342,14 +342,30 @@ impl App {
 
                 frame.render_widget(details, project_area);
             } else {
-                let (msg, style) = (
-                    vec!["Select a project and press ".into(), "Enter".bold()],
-                    Style::default(),
-                );
-                let text = Text::from(Line::from(msg)).patch_style(style);
-                let project_message =
-                    Paragraph::new(text).block(Block::bordered().title("Select a Project"));
-                frame.render_widget(project_message, project_area);
+                if !self.updates.is_empty() {
+                    let (msg, style) = (
+                        vec!["Select a project and press ".into(), "Enter".bold()],
+                        Style::default(),
+                    );
+                    let text = Text::from(Line::from(msg)).patch_style(style);
+                    let project_message =
+                        Paragraph::new(text).block(Block::bordered().title("Select a project"));
+                    frame.render_widget(project_message, project_area);
+                } else {
+                    let (msg, style) = (
+                        vec![
+                            "There are currently no updates for this project, Press ".into(),
+                            "a".bold(),
+                            " to create one!".into(),
+                        ],
+                        Style::default(),
+                    );
+
+                    let text = Text::from(Line::from(msg)).patch_style(style);
+                    let project_message =
+                        Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::bordered().title("Latest Update"));
+                    frame.render_widget(project_message, project_area);
+                }
             }
 
             let updates: Vec<ListItem<'_>> = self
