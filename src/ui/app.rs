@@ -29,6 +29,9 @@ pub struct App {
     pub show_update_input: bool,
     pub show_update_table: bool,
     pub show_help: bool,
+    pub help_scroll: u16,
+    pub detail_scroll: u16,
+    pub confirmation_scroll: u16,
     pub projects: Vec<Project>,
     pub updates: Vec<Update>,
     pub update_selection: TableState,
@@ -131,6 +134,7 @@ impl App {
     }
 
     fn clear_updates(&mut self) {
+        self.detail_scroll = 0;
         self.updates.clear();
         self.update_selection = TableState::default();
         self.opened_update_id = None;
@@ -156,6 +160,7 @@ impl App {
 
         let selected = if updates.is_empty() { None } else { Some(0) };
 
+        self.detail_scroll = 0;
         self.updates = updates;
         self.update_selection.select(selected);
 

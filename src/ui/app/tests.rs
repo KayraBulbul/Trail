@@ -37,6 +37,9 @@ fn setup() -> (App, Input, Connection) {
             show_update_input: false,
             show_update_table: false,
             show_help: false,
+            help_scroll: 0,
+            detail_scroll: 0,
+            confirmation_scroll: 0,
             projects: Vec::new(),
             updates: Vec::new(),
             project_selection: ListState::default(),
@@ -1096,4 +1099,86 @@ fn edit_requires_an_update_and_reports_missing_records() {
     assert!(app.show_update_input);
     assert!(app.err.is_some());
     assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
+}
+
+fn rendered_text(app: &mut App, input: &mut Input, width: u16, height: u16) -> String {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| app.render(frame, input)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[test]
+fn help_is_visible_without_projects_and_its_contents_are_reachable() {
+    let (mut app, mut input, conn) = browser();
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Trail keybindings"));
+    press(&mut app, &mut input, &conn, KeyCode::End);
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    press(&mut app, &mut input, &conn, KeyCode::Home);
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
+    assert!(!app.show_project_input);
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
+    assert!(app.show_project_input);
+}
+
+#[test]
+fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].body = format!("{}\nBODY_END", "界abc".repeat(300));
+    app.updates[0].next = "NEXT_STEP".into();
+    for (width, height) in [(80, 24), (40, 12)] {
+        press(&mut app, &mut input, &conn, KeyCode::End);
+        let text = rendered_text(&mut app, &mut input, width, height);
+        assert!(text.contains("BODY_END"));
+        assert!(text.contains("NEXT_STEP"));
+        press(&mut app, &mut input, &conn, KeyCode::PageDown);
+        assert!(rendered_text(&mut app, &mut input, width, height).contains("NEXT_STEP"));
+        press(&mut app, &mut input, &conn, KeyCode::Home);
+        assert!(rendered_text(&mut app, &mut input, width, height).contains("Title: Latest"));
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert!(app.detail_scroll > 0);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(app.detail_scroll, 0);
+    assert!(rendered_text(&mut app, &mut input, 80, 24).contains("Older body"));
+}
+
+#[test]
+fn confirmation_scrolling_preserves_the_draft_and_allows_saving() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    let body = format!("{}\nBODY_END", "line\n".repeat(40));
+    for field in ["Scrollable", body.as_str(), "NEXT_STEP"] {
+        submit(&mut app, &mut input, &conn, field);
+    }
+    for key in [KeyCode::Char('j'), KeyCode::PageDown, KeyCode::End] {
+        press(&mut app, &mut input, &conn, key);
+    }
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("NEXT_STEP"));
+    press(&mut app, &mut input, &conn, KeyCode::Home);
+    press(&mut app, &mut input, &conn, KeyCode::Up);
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Title: Scrollable"));
+    assert_eq!(input.update.body.as_deref(), Some(body.as_str()));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    let updates = sqlite::get_updates(&conn, "a").unwrap();
+    let saved = updates
+        .iter()
+        .find(|update| update.title == "Scrollable")
+        .unwrap();
+    assert_eq!(saved.body, body);
+    assert_eq!(saved.next, "NEXT_STEP");
+    assert_eq!(app.detail_scroll, 0);
 }

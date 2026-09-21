@@ -36,6 +36,8 @@ impl App {
             self.render_project_confirmation(frame, text_in);
         } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
             self.render_update_confirmation(frame, text_in);
+        } else if self.show_help {
+            self.render_help_window(frame);
         } else if self.projects.is_empty() {
             self.render_empty_state(frame);
         } else if self.show_update_table {
@@ -44,8 +46,6 @@ impl App {
 
             self.render_table(frame, rects[0]);
             self.render_footer(frame, rects[1]);
-        } else if self.show_help {
-            self.render_help_window(frame);
         } else {
             self.render_browser(frame);
         }
@@ -209,7 +209,7 @@ impl App {
         frame.render_widget(directory_message, directory_area);
     }
 
-    fn render_update_confirmation(&self, frame: &mut Frame, text_in: &input::Input) {
+    fn render_update_confirmation(&mut self, frame: &mut Frame, text_in: &input::Input) {
         let layout = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(0),
@@ -228,6 +228,7 @@ impl App {
                 " to confirm update."
             }
             .into(),
+            " | j/k: scroll".into(),
         ];
 
         if let Some(error) = &self.err {
@@ -242,11 +243,10 @@ impl App {
 
         let help_text = Text::from(Line::from(help_msg)).patch_style(Style::default());
         let help_message = Paragraph::new(help_text).style(theme::SECONDARY);
-        let details = Paragraph::new(format!("Title: {title}\nBody: {body}\nNext: {next}"))
-            .wrap(Wrap { trim: false });
+        let details = Text::from(format!("Title: {title}\nBody: {body}\nNext: {next}"));
 
         frame.render_widget(help_message, help_area);
-        frame.render_widget(details, details_area);
+        render_scrolled(frame, details, details_area, &mut self.confirmation_scroll);
     }
 
     fn render_empty_state(&self, frame: &mut Frame) {
@@ -340,15 +340,14 @@ impl App {
                 Line::from(updated_at_msg).style(theme::SECONDARY),
             ]);
 
-            let details = Paragraph::new(text).wrap(Wrap { trim: false }).block(
-                Block::bordered()
-                    .title(update.title.as_str())
-                    .border_style(theme::border(
-                        self.focused_pane == BrowserPane::LatestUpdate,
-                    )),
-            );
-
-            frame.render_widget(details, latest_update_area);
+            let block = Block::bordered()
+                .title(update.title.as_str())
+                .border_style(theme::border(
+                    self.focused_pane == BrowserPane::LatestUpdate,
+                ));
+            let inner = block.inner(latest_update_area);
+            frame.render_widget(block, latest_update_area);
+            render_scrolled(frame, text, inner, &mut self.detail_scroll);
         } else {
             if self.opened_project_id.is_none() {
                 let (msg, style) = (
@@ -389,7 +388,7 @@ impl App {
                 "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
             }
             BrowserPane::LatestUpdate => {
-                "(a) new update | (e) edit | (u) table | (Ctrl+h) projects | (?) help | (q) quit"
+                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
             }
         };
         let help_message = Paragraph::new(help).style(theme::SECONDARY);
@@ -560,8 +559,8 @@ impl App {
         frame.render_widget(info_footer, area);
     }
 
-    fn render_help_window(&self, frame: &mut Frame) {
-        let help = Paragraph::new(vec![
+    fn render_help_window(&mut self, frame: &mut Frame) {
+        let help = Text::from(vec![
             Line::from("Browser").style(theme::HEADING),
             Line::from("A: new project"),
             Line::from("?: help"),
@@ -573,6 +572,7 @@ impl App {
             Line::from("d: delete selected project (Projects focused)"),
             Line::from("a: new update"),
             Line::from("e: edit displayed update (Latest Update focused)"),
+            Line::from("j/k or Up/Down: scroll update details"),
             Line::from("u: update table (requires an open project)"),
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
@@ -589,6 +589,7 @@ impl App {
             Line::from("Left / Right: move cursor"),
             Line::from("Backspace: delete previous character"),
             Line::from("Enter: submit field"),
+            Line::from("j/k or Up/Down: scroll confirmation"),
             Line::from("Shift+Enter: new line in update body / next"),
             Line::from("Esc: cancel"),
             Line::from(""),
@@ -597,17 +598,17 @@ impl App {
             Line::from("Esc: cancel"),
             Line::from(""),
             Line::from("Help").style(theme::HEADING),
+            Line::from("j/k or Up/Down: scroll"),
+            Line::from("PgUp/PgDn, Home/End: scroll details, confirmation or help"),
             Line::from("Esc / ?: return"),
             Line::from("q: quit"),
-        ])
-        .block(
-            Block::bordered()
-                .title("Trail keybindings")
-                .border_style(theme::border(true)),
-        )
-        .wrap(Wrap { trim: false });
-
-        frame.render_widget(help, frame.area());
+        ]);
+        let block = Block::bordered()
+            .title("Trail keybindings | j/k: scroll | Esc: close")
+            .border_style(theme::border(true));
+        let inner = block.inner(frame.area());
+        frame.render_widget(block, frame.area());
+        render_scrolled(frame, help, inner, &mut self.help_scroll);
     }
 }
 
@@ -648,4 +649,31 @@ fn wrapped_input(
         index += 1;
     }
     (lines, cursor)
+}
+
+fn render_scrolled(frame: &mut Frame, text: Text<'_>, area: Rect, scroll: &mut u16) {
+    if area.is_empty() {
+        return;
+    }
+    let mut lines = Vec::new();
+    for line in text.lines {
+        let mut wrapped = Line::default();
+        let mut width = 0;
+        for grapheme in line.styled_graphemes(text.style) {
+            let cell_width = Span::raw(grapheme.symbol).width();
+            if width > 0 && width + cell_width > usize::from(area.width) {
+                lines.push(wrapped);
+                wrapped = Line::default();
+                width = 0;
+            }
+            wrapped
+                .spans
+                .push(Span::styled(grapheme.symbol.to_string(), grapheme.style));
+            width += cell_width;
+        }
+        lines.push(wrapped);
+    }
+    let max_scroll = lines.len().saturating_sub(usize::from(area.height));
+    *scroll = usize::from(*scroll).min(max_scroll) as u16;
+    frame.render_widget(Paragraph::new(Text::from(lines)).scroll((*scroll, 0)), area);
 }
