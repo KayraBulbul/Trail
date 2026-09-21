@@ -35,15 +35,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exit: false,
     };
 
-    let app_result = execute!(
-        std::io::stdout(),
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )
-    .and_then(|()| app.run(&mut terminal, &conn));
-    let keyboard_result = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    let supports_keyboard_enhancement = matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    );
+
+    if supports_keyboard_enhancement {
+        execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+    }
+    let app_result = app.run(&mut terminal, &conn);
+
+    if supports_keyboard_enhancement {
+        execute!(std::io::stdout(), PopKeyboardEnhancementFlags)?;
+    }
 
     ratatui::restore();
     app_result?;
-    keyboard_result?;
     Ok(())
 }

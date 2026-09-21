@@ -1,9 +1,7 @@
 use super::*;
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
-    ui::{
-        input::{Input, InputMode},
-    },
+    ui::input::{Input, InputMode},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{fs, path::PathBuf};
@@ -903,7 +901,12 @@ fn update_delete_confirmation_blocks_keys_and_cancel_preserves_data() {
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     assert_eq!(app.pending_update_delete_id.as_deref(), Some("latest"));
-    for key in [KeyCode::Down, KeyCode::Right, KeyCode::Char('d'), KeyCode::Char('q')] {
+    for key in [
+        KeyCode::Down,
+        KeyCode::Right,
+        KeyCode::Char('d'),
+        KeyCode::Char('q'),
+    ] {
         press(&mut app, &mut input, &conn, key);
     }
     assert_eq!(app.update_selection.selected(), Some(0));
@@ -956,13 +959,19 @@ fn update_delete_ignores_missing_selection_and_preserves_data_on_failure() {
     conn.execute_batch(
         "CREATE TRIGGER fail_delete_update BEFORE DELETE ON updates
          BEGIN SELECT RAISE(FAIL, 'forced delete failure'); END;",
-    ).unwrap();
+    )
+    .unwrap();
     app.update_selection.select(Some(1));
     app.opened_update_id = Some("older".into());
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     assert!(app.pending_update_delete_id.is_none());
-    assert!(app.err.as_deref().unwrap().contains("forced delete failure"));
+    assert!(
+        app.err
+            .as_deref()
+            .unwrap()
+            .contains("forced delete failure")
+    );
     assert_eq!(app.opened_update_id.as_deref(), Some("older"));
     assert_eq!(app.update_selection.selected(), Some(1));
     assert_eq!(app.updates.len(), 2);
