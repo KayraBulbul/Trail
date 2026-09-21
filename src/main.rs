@@ -1,3 +1,7 @@
+use crossterm::{
+    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    execute,
+};
 use ratatui::widgets::{ListState, TableState};
 
 use crate::ui::app::BrowserPane;
@@ -27,9 +31,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         exit: false,
     };
 
-    let app_result = app.run(&mut terminal, &conn);
+    let app_result = execute!(
+        std::io::stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )
+    .and_then(|()| app.run(&mut terminal, &conn));
+    let keyboard_result = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
 
     ratatui::restore();
     app_result?;
+    keyboard_result?;
     Ok(())
 }

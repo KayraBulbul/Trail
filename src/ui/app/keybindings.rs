@@ -117,6 +117,15 @@ impl App {
                 }
             } else if self.show_update_input && text_in.input_mode == InputMode::Editing {
                 match key_event.code {
+                    KeyCode::Enter
+                        if key_event.modifiers.contains(KeyModifiers::SHIFT)
+                            && matches!(
+                                text_in.update_step,
+                                UpdateStep::Body | UpdateStep::Next
+                            ) =>
+                    {
+                        text_in.enter_char('\n');
+                    }
                     KeyCode::Enter if text_in.update_step == UpdateStep::Title => {
                         text_in.submit_title();
                         self.err = None;

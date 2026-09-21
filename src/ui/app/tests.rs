@@ -1229,3 +1229,159 @@ fn help_lists_controls_and_blocks_browser_actions() {
     press(&mut app, &mut input, &conn, KeyCode::Char('q'));
     assert!(app.exit);
 }
+
+#[test]
+fn input_forms_show_placeholders_centered_with_help_below() {
+    let (mut app, mut input, _) = setup();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    for (project, project_step, update_step, placeholder) in [
+        (true, ProjectStep::Name, UpdateStep::Title, "Optional: name"),
+        (
+            true,
+            ProjectStep::Directory,
+            UpdateStep::Title,
+            "Required: path",
+        ),
+        (
+            false,
+            ProjectStep::Name,
+            UpdateStep::Title,
+            "Required: a short title",
+        ),
+        (
+            false,
+            ProjectStep::Name,
+            UpdateStep::Body,
+            "Required: what did",
+        ),
+        (
+            false,
+            ProjectStep::Name,
+            UpdateStep::Next,
+            "Optional: what will",
+        ),
+    ] {
+        app.show_project_input = project;
+        app.show_update_input = !project;
+        input.project_step = project_step;
+        input.update_step = update_step;
+        terminal
+            .draw(|frame| app.render(frame, &mut input))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(14, 10)].symbol(), "┌");
+        assert_eq!(buffer[(85, 12)].symbol(), "┘");
+        assert!(screen_text(buffer).contains(placeholder));
+        let help: String = (14..86).map(|x| buffer[(x, 13)].symbol()).collect();
+        assert!(help.contains("Enter: continue | Esc: cancel"));
+        assert_eq!(
+            help.contains("Shift+Enter"),
+            !project && input.update_step != UpdateStep::Title
+        );
+        assert_eq!(buffer[(15, 11)].fg, Color::DarkGray);
+    }
+}
+
+#[test]
+fn input_wraps_grows_and_scrolls_with_the_cursor() {
+    use ratatui::{backend::Backend, layout::Position};
+    let (mut app, mut input, _) = setup();
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    input.input = format!("{}界e\u{301}Z", "x".repeat(69));
+    input.character_index = input.input.chars().count();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(14, 10)].symbol(), "┌");
+    assert_eq!(buffer[(85, 13)].symbol(), "┘");
+    assert_eq!(buffer[(15, 12)].symbol(), "界");
+    assert_eq!(buffer[(17, 12)].symbol(), "e\u{301}");
+    assert_eq!(
+        terminal.backend_mut().get_cursor_position().unwrap(),
+        Position::new(19, 12)
+    );
+    input.move_cursor_left();
+    input.delete_char();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert_eq!(
+        terminal.backend_mut().get_cursor_position().unwrap(),
+        Position::new(18, 12)
+    );
+
+    input.input = "line\n".repeat(40);
+    input.character_index = input.input.chars().count();
+    for (width, height) in [(100, 24), (20, 8), (3, 5)] {
+        terminal.backend_mut().resize(width, height);
+        terminal.autoresize().unwrap();
+        terminal
+            .draw(|frame| app.render(frame, &mut input))
+            .unwrap();
+        let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+        assert!(cursor.x > 0 && cursor.x < width - 1);
+        assert!(cursor.y > 0 && cursor.y < height - 1);
+        input.character_index = 0;
+        terminal
+            .draw(|frame| app.render(frame, &mut input))
+            .unwrap();
+        assert!(screen_text(terminal.backend().buffer()).contains('l'));
+        input.character_index = input.input.chars().count();
+    }
+}
+
+#[test]
+fn shift_enter_adds_newlines_only_to_body_and_next_and_saves_them() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    input.input = "Multiline".into();
+    input.character_index = input.input.chars().count();
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        &mut input,
+        &conn,
+    )
+    .unwrap();
+    assert!(input.update_step == UpdateStep::Body);
+    for step in [UpdateStep::Body, UpdateStep::Next] {
+        input.input = "firstsecond".into();
+        input.character_index = 5;
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            &mut input,
+            &conn,
+        )
+        .unwrap();
+        assert!(input.update_step == step);
+        assert_eq!(input.input, "first\nsecond");
+        assert_eq!(input.character_index, 6);
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+    }
+    let confirmation = render_browser(&mut app, &mut input);
+    for y in [3, 5] {
+        let line: String = (0..6).map(|x| confirmation[(x, y)].symbol()).collect();
+        assert_eq!(line, "second");
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    let updates = sqlite::get_updates(&conn, "a").unwrap();
+    let saved = updates.iter().find(|u| u.title == "Multiline").unwrap();
+    assert_eq!(saved.body, "first\nsecond");
+    assert_eq!(saved.next, "first\nsecond");
+
+    let saved_view = render_browser(&mut app, &mut input);
+    for y in [3, 5] {
+        let line: String = (21..27).map(|x| saved_view[(x, y)].symbol()).collect();
+        assert_eq!(line, "second");
+    }
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        &mut input,
+        &conn,
+    )
+    .unwrap();
+    assert!(input.project_step == ProjectStep::Directory);
+    assert!(input.input.is_empty());
+}

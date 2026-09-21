@@ -8,10 +8,9 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Text},
+    text::{Line, Span, Text},
     widgets::{
-        Block, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState,
-        Table, Wrap,
+        Block, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap,
     },
 };
 
@@ -52,125 +51,105 @@ impl App {
     }
 
     fn render_project_input(&self, frame: &mut Frame, text_in: &input::Input) {
-        let layout = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ]);
-        let [input_area, help_area, error_area] = frame.area().layout(&layout);
-
-        let (msg, style) = match text_in.project_step {
-            ProjectStep::Name => (
-                vec![
-                    "Press ".into(),
-                    "Esc".bold(),
-                    " to stop editing, ".into(),
-                    "Enter".bold(),
-                    " your project name:".into(),
-                ],
-                Style::default(),
-            ),
+        let (title, placeholder) = match text_in.project_step {
+            ProjectStep::Name => ("Project Name", "Optional: name, defaults to directory name"),
             ProjectStep::Directory => (
-                vec![
-                    "Press ".into(),
-                    "Esc".bold(),
-                    " to stop editing, ".into(),
-                    "Enter".bold(),
-                    " your project directory:".into(),
-                ],
-                Style::default(),
+                "Project Directory",
+                "Required: path to your project directory",
             ),
             ProjectStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
-        let text = Text::from(Line::from(msg)).patch_style(style);
-        let help_message = Paragraph::new(text);
-        frame.render_widget(help_message, help_area);
-
-        let input = Paragraph::new(text_in.input.as_str())
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::bordered().title(match text_in.project_step {
-                ProjectStep::Name => "Project Name",
-                ProjectStep::Directory => "Project Directory",
-                ProjectStep::Confirm => unreachable!("Confirm is rendered separately"),
-            }));
-
-        if let Some(error) = &self.err {
-            let message = Paragraph::new(error.to_string()).style(Style::default().fg(Color::Red));
-            frame.render_widget(message, error_area);
-        }
-
-        frame.render_widget(input, input_area);
-        #[expect(clippy::cast_possible_truncation)]
-        frame.set_cursor_position(Position::new(
-            input_area.x + text_in.character_index as u16 + 1,
-            input_area.y + 1,
-        ));
+        self.render_input(frame, text_in, title, placeholder, false);
     }
 
     fn render_update_input(&self, frame: &mut Frame, text_in: &input::Input) {
-        let layout = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ]);
-        let [input_area, help_area, error_area] = frame.area().layout(&layout);
-
-        let (msg, style) = match text_in.update_step {
-            UpdateStep::Title => (
-                vec![
-                    "Press ".into(),
-                    "Esc".bold(),
-                    " to stop editing, ".into(),
-                    "Enter".bold(),
-                    " your update title:".into(),
-                ],
-                Style::default(),
-            ),
-            UpdateStep::Body => (
-                vec![
-                    "Press ".into(),
-                    "Esc".bold(),
-                    " to stop editing, ".into(),
-                    "Enter".bold(),
-                    " your update body:".into(),
-                ],
-                Style::default(),
-            ),
-            UpdateStep::Next => (
-                vec![
-                    "Press ".into(),
-                    "Esc".bold(),
-                    " to stop editing, ".into(),
-                    "Enter".bold(),
-                    " your next plans:".into(),
-                ],
-                Style::default(),
-            ),
+        let (title, placeholder) = match text_in.update_step {
+            UpdateStep::Title => ("Update Title", "Required: a short title for this update"),
+            UpdateStep::Body => ("Update Body", "Required: what did you work on?"),
+            UpdateStep::Next => ("What's Next?", "Optional: what will you work on next?"),
             UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
-        let text = Text::from(Line::from(msg)).patch_style(style);
-        let help_message = Paragraph::new(text);
-        frame.render_widget(help_message, help_area);
+        let multiline = matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next);
+        self.render_input(frame, text_in, title, placeholder, multiline);
+    }
 
-        let input = Paragraph::new(text_in.input.as_str())
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::bordered().title(match text_in.update_step {
-                UpdateStep::Title => "Update Title",
-                UpdateStep::Body => "Update Body",
-                UpdateStep::Next => "What's Next?",
-                UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
-            }));
-
-        if let Some(error) = &self.err {
-            let message = Paragraph::new(error.to_string()).style(Style::default().fg(Color::Red));
-            frame.render_widget(message, error_area);
+    fn render_input(
+        &self,
+        frame: &mut Frame,
+        text_in: &input::Input,
+        title: &str,
+        placeholder: &str,
+        multiline: bool,
+    ) {
+        let area = frame.area();
+        let width = area.width.min(72);
+        if width < 3 || area.height < 5 {
+            return;
         }
-
-        frame.render_widget(input, input_area);
-        #[expect(clippy::cast_possible_truncation)]
+        let (mut lines, (cursor_x, cursor_y)) = wrapped_input(
+            &text_in.input,
+            text_in.character_index,
+            usize::from(width - 2),
+        );
+        let color = if text_in.input.is_empty() {
+            lines = wrapped_input(placeholder, usize::MAX, usize::from(width - 2)).0;
+            Color::DarkGray
+        } else {
+            Color::Yellow
+        };
+        let help = if multiline {
+            "Enter: continue | Esc: cancel | Shift+Enter: new line"
+        } else {
+            "Enter: continue | Esc: cancel"
+        };
+        let help_lines = wrapped_input(help, usize::MAX, usize::from(width)).0;
+        let error_height = u16::from(self.err.is_some());
+        let help_height = help_lines
+            .len()
+            .min(usize::from(area.height - 3 - error_height)) as u16;
+        let help = Paragraph::new(Text::from(
+            help_lines.into_iter().map(Line::from).collect::<Vec<_>>(),
+        ))
+        .centered();
+        let height = (lines.len() + 2).min(usize::from(
+            area.height.saturating_sub(help_height + error_height),
+        )) as u16;
+        let input_area = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y
+                + ((area.height - height) / 2)
+                    .min(area.height - height - help_height - error_height),
+            width,
+            height,
+        );
+        let scroll = (cursor_y + 1).saturating_sub(usize::from(height - 2));
+        let content = Paragraph::new(Text::from(
+            lines
+                .into_iter()
+                .skip(scroll)
+                .map(Line::from)
+                .collect::<Vec<_>>(),
+        ))
+        .fg(color);
+        frame.render_widget(content.block(Block::bordered().title(title)), input_area);
+        frame.render_widget(
+            help,
+            Rect::new(input_area.x, input_area.bottom(), width, help_height),
+        );
+        if let Some(error) = &self.err {
+            frame.render_widget(
+                Paragraph::new(error.as_str()).red().centered(),
+                Rect::new(
+                    input_area.x,
+                    input_area.bottom() + help_height,
+                    width,
+                    error_height,
+                ),
+            );
+        }
         frame.set_cursor_position(Position::new(
-            input_area.x + text_in.character_index as u16 + 1,
-            input_area.y + 1,
+            input_area.x + 1 + cursor_x as u16,
+            input_area.y + 1 + (cursor_y - scroll) as u16,
         ));
     }
 
@@ -239,18 +218,10 @@ impl App {
         let body = text_in.update.body.as_deref().unwrap_or("(missing)");
         let next = text_in.update.next.as_deref().unwrap_or("(missing)");
 
-        let title_msg = vec!["Title: ".into(), title.into()];
-        let body_msg = vec!["Body: ".into(), body.into()];
-        let next_msg = vec!["Next: ".into(), next.into()];
-
         let help_text = Text::from(Line::from(help_msg)).patch_style(Style::default());
         let help_message = Paragraph::new(help_text);
-        let details = Paragraph::new(Text::from(vec![
-            Line::from(title_msg),
-            Line::from(body_msg),
-            Line::from(next_msg),
-        ]))
-        .wrap(Wrap { trim: false });
+        let details = Paragraph::new(format!("Title: {title}\nBody: {body}\nNext: {next}"))
+            .wrap(Wrap { trim: false });
 
         frame.render_widget(help_message, help_area);
         frame.render_widget(details, details_area);
@@ -336,10 +307,6 @@ impl App {
             });
 
         if let Some(update) = opened_update {
-            let title_msg = vec!["Title: ".into(), update.title.as_str().into()];
-            let body_msg = vec!["Body: ".into(), update.body.as_str().into()];
-            let next_msg = vec!["What to do next: ".into(), update.next.as_str().into()];
-
             let created_at_local_time = update.created_at.with_timezone(&Local);
             let updated_at_local_time = update.updated_at.with_timezone(&Local);
 
@@ -349,13 +316,12 @@ impl App {
             let created_at_msg = vec!["Created at: ".into(), created_at_display.bold()];
             let updated_at_msg = vec!["Updated at: ".into(), updated_at_display.bold()];
 
-            let text = Text::from(vec![
-                Line::from(title_msg),
-                Line::from(body_msg),
-                Line::from(next_msg),
-                Line::from(created_at_msg),
-                Line::from(updated_at_msg),
-            ]);
+            let mut text = Text::from(format!(
+                "Title: {}\nBody: {}\nWhat to do next: {}",
+                update.title, update.body, update.next,
+            ));
+            text.lines
+                .extend([Line::from(created_at_msg), Line::from(updated_at_msg)]);
 
             let latest_update_border_colour = if self.focused_pane == BrowserPane::LatestUpdate {
                 Color::Yellow
@@ -581,6 +547,7 @@ impl App {
             Line::from("Left / Right: move cursor"),
             Line::from("Backspace: delete previous character"),
             Line::from("Enter: submit field"),
+            Line::from("Shift+Enter: new line in update body / next"),
             Line::from("Esc: cancel"),
             Line::from(""),
             Line::from("Delete confirmation".yellow().bold()),
@@ -596,4 +563,43 @@ impl App {
 
         frame.render_widget(help, frame.area());
     }
+}
+
+// Wrap text and locate the cursor together so both use the same terminal cell widths.
+fn wrapped_input(
+    text: &str,
+    character_index: usize,
+    width: usize,
+) -> (Vec<String>, (usize, usize)) {
+    let mut lines = Vec::new();
+    let mut cursor = (0, 0);
+    let mut index = 0;
+    for line in text.split('\n') {
+        lines.push(String::new());
+        let mut x = 0;
+        let span = Span::raw(line);
+        for grapheme in span.styled_graphemes(Style::default()) {
+            let cell_width = Span::raw(grapheme.symbol).width();
+            if x + cell_width > width {
+                lines.push(String::new());
+                x = 0;
+            }
+            let next_index = index + grapheme.symbol.chars().count();
+            if (index..next_index).contains(&character_index) {
+                cursor = (x, lines.len() - 1);
+            }
+            lines.last_mut().unwrap().push_str(grapheme.symbol);
+            x += cell_width;
+            index = next_index;
+        }
+        if index == character_index {
+            if x >= width {
+                lines.push(String::new());
+                x = 0;
+            }
+            cursor = (x, lines.len() - 1);
+        }
+        index += 1;
+    }
+    (lines, cursor)
 }
