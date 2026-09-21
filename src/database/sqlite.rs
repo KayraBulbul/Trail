@@ -2,7 +2,7 @@ use std::io;
 
 use crate::types::{
     project::{Project, ProjectDraft},
-    update::{self, Update, UpdateDraft},
+    update::{Update, UpdateDraft},
 };
 use rusqlite::{Connection, Result};
 use uuid::Uuid;
