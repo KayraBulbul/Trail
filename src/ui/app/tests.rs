@@ -1432,7 +1432,7 @@ fn theme_covers_focus_empty_panes_forms_and_delete_popup() {
     app.focused_pane = BrowserPane::LatestUpdate;
     app.updates.clear();
     let empty = render_browser(&mut app, &mut input);
-    assert_eq!(empty[(2, 1)].fg, theme::MUTED);
+    assert_eq!(empty[(2, 1)].fg, theme::ACCENT);
     assert_eq!(empty[(20, 0)].fg, theme::ACCENT);
     assert_eq!(empty[(21, 1)].fg, theme::MUTED);
     assert_eq!(empty[(99, 11)].bg, theme::BACKGROUND);
@@ -1452,4 +1452,29 @@ fn theme_covers_focus_empty_panes_forms_and_delete_popup() {
     let typed = render_browser(&mut app, &mut input);
     assert_eq!(typed[(15, 5)].fg, theme::TEXT);
     assert_eq!(typed[(15, 5)].bg, theme::BACKGROUND);
+}
+
+#[test]
+fn project_highlight_follows_opened_project_not_navigation_or_focus() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    for pane in [BrowserPane::Projects, BrowserPane::LatestUpdate] {
+        app.focused_pane = pane;
+        let buffer = render_browser(&mut app, &mut input);
+        assert_eq!(Some(buffer[(2, 1)].bg), theme::ROW.bg);
+        assert_eq!(buffer[(2, 1)].fg, theme::ACCENT);
+        assert_eq!(buffer[(2, 2)].bg, theme::BACKGROUND);
+        assert_eq!(buffer[(1, 2)].symbol(), ">");
+    }
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Up);
+    let buffer = render_browser(&mut app, &mut input);
+    assert_eq!(app.opened_project_id.as_deref(), Some("b"));
+    assert_eq!(buffer[(2, 1)].bg, theme::BACKGROUND);
+    assert_eq!(Some(buffer[(2, 2)].bg), theme::ROW.bg);
+    assert_eq!(buffer[(2, 2)].fg, theme::ACCENT);
+    assert_eq!(buffer[(1, 1)].symbol(), ">");
 }

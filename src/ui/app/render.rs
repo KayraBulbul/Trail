@@ -292,22 +292,22 @@ impl App {
         let projects: Vec<ListItem<'_>> = self
             .projects
             .iter()
-            .map(|project| ListItem::new(project.name.as_str()))
+            .map(|project| {
+                let item = ListItem::new(project.name.as_str());
+                if self.opened_project_id.as_deref() == Some(project.id.as_str()) {
+                    item.style(theme::ROW.fg(theme::ACCENT))
+                } else {
+                    item
+                }
+            })
             .collect();
 
         let projects_focused = self.focused_pane == BrowserPane::Projects;
-        let list = List::new(projects)
-            .highlight_symbol("> ")
-            .highlight_style(theme::ROW.fg(if projects_focused {
-                theme::ACCENT
-            } else {
-                theme::MUTED
-            }))
-            .block(
-                Block::bordered()
-                    .title("Projects")
-                    .border_style(theme::border(projects_focused)),
-            );
+        let list = List::new(projects).highlight_symbol("> ").block(
+            Block::bordered()
+                .title("Projects")
+                .border_style(theme::border(projects_focused)),
+        );
         frame.render_stateful_widget(list, project_list_area, &mut self.project_selection);
 
         let opened_update = self
@@ -352,7 +352,7 @@ impl App {
 
             frame.render_widget(details, latest_update_area);
         } else {
-            if self.updates.is_empty() {
+            if self.opened_project_id.is_none() {
                 let (msg, style) = (
                     vec!["Select a project and press ".into(), "Enter".bold()],
                     Style::default(),
@@ -364,7 +364,7 @@ impl App {
                     )),
                 );
                 frame.render_widget(project_message, latest_update_area);
-            } else {
+            } else if self.updates.is_empty() {
                 let (msg, style) = (
                     vec![
                         "There are currently no updates for this project, Press ".into(),
