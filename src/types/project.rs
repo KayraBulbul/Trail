@@ -5,6 +5,7 @@ pub struct ProjectDraft {
     pub directory: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct Project {
     pub id: String,
     pub name: String,
