@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opened_project_id: None,
         opened_update_id: None,
         pending_project_delete_id: None,
+        pending_update_delete_id: None,
         focused_pane: BrowserPane::Projects,
         err: None,
         exit: false,

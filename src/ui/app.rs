@@ -36,6 +36,7 @@ pub struct App {
     pub opened_project_id: Option<String>,
     pub opened_update_id: Option<String>,
     pub pending_project_delete_id: Option<String>,
+    pub pending_update_delete_id: Option<String>,
     pub focused_pane: BrowserPane,
     pub err: Option<String>,
     pub exit: bool,
@@ -80,6 +81,27 @@ impl App {
                 Some(previous_index.min(self.projects.len() - 1))
             };
             self.project_selection.select(selection);
+        }
+    }
+
+    fn delete_update(&mut self, conn: &Connection, id: &str) {
+        if let Err(error) = sqlite::delete_update(conn, id) {
+            self.err = Some(format!("Couldn't delete update: {error}"));
+            return;
+        }
+
+        self.err = None;
+        if self.opened_update_id.as_deref() == Some(id) {
+            self.opened_update_id = None;
+        }
+        let previous_index = self.update_selection.selected().unwrap_or(0);
+        if let Err(error) = self.reload_updates(conn) {
+            self.err = Some(format!("Couldn't reload updates: {error}"));
+        } else if self.updates.is_empty() {
+            self.update_selection = TableState::default();
+        } else {
+            self.update_selection
+                .select(Some(previous_index.min(self.updates.len() - 1)));
         }
     }
 

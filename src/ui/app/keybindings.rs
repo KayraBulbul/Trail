@@ -28,6 +28,19 @@ impl App {
                 return Ok(());
             }
 
+            if self.pending_update_delete_id.is_some() {
+                match key_event.code {
+                    KeyCode::Enter => {
+                        if let Some(id) = self.pending_update_delete_id.take() {
+                            self.delete_update(conn, &id);
+                        }
+                    }
+                    KeyCode::Esc => self.pending_update_delete_id = None,
+                    _ => {}
+                }
+                return Ok(());
+            }
+
             if self.show_project_input && text_in.input_mode == InputMode::Editing {
                 match key_event.code {
                     KeyCode::Enter if text_in.project_step == ProjectStep::Name => {
@@ -241,6 +254,16 @@ impl App {
                             self.focused_pane = BrowserPane::LatestUpdate;
                         }
                     }
+                    KeyCode::Char('d') => {
+                        if let Some(update) = self
+                            .update_selection
+                            .selected()
+                            .and_then(|index| self.updates.get(index))
+                        {
+                            self.pending_update_delete_id = Some(update.id.clone());
+                            self.err = None;
+                        }
+                    }
                     _ => {}
                 }
             } else if self.show_help {
@@ -313,7 +336,7 @@ impl App {
                         self.focused_pane = BrowserPane::LatestUpdate;
                     }
                     // Delete project
-                    KeyCode::Char('D')
+                    KeyCode::Char('d')
                         if let Some(project) = self
                             .project_selection
                             .selected()

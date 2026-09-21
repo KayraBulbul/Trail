@@ -14,7 +14,8 @@ use ratatui::{
     },
 };
 
-const INFO_TEXT: [&str; 1] = ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (q) quit"];
+const INFO_TEXT: [&str; 1] =
+    ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (d) delete | (q) quit"];
 const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
@@ -397,7 +398,7 @@ impl App {
                 ") Open project | (".into(),
                 "CTRL + h/l".bold(),
                 ") Switch panes | (".into(),
-                "D".bold(),
+                "d".bold(),
                 ") Delete project | (".into(),
                 "?".bold(),
                 ") Help | (".into(),
@@ -412,13 +413,30 @@ impl App {
     }
 
     fn render_delete_confirmation(&self, frame: &mut Frame) {
-        let Some(project) = self
-            .projects
-            .iter()
-            .find(|project| self.pending_project_delete_id.as_deref() == Some(project.id.as_str()))
-        else {
-            return;
-        };
+        let (title, name, description, note) =
+            if let Some(project) = self.projects.iter().find(|project| {
+                self.pending_project_delete_id.as_deref() == Some(project.id.as_str())
+            }) {
+                (
+                    "Delete project?",
+                    project.name.as_str(),
+                    "This removes the project from Trail.",
+                    "Files on disk will remain.",
+                )
+            } else if let Some(update) = self
+                .updates
+                .iter()
+                .find(|update| self.pending_update_delete_id.as_deref() == Some(update.id.as_str()))
+            {
+                (
+                    "Delete update?",
+                    update.title.as_str(),
+                    "This removes the update from Trail.",
+                    "This cannot be undone.",
+                )
+            } else {
+                return;
+            };
 
         let area = frame.area();
         let width = area.width.min(60);
@@ -430,10 +448,10 @@ impl App {
             height,
         );
         let message = Paragraph::new(vec![
-            Line::from(project.name.as_str().bold()),
+            Line::from(name.bold()),
             Line::from(""),
-            Line::from("This removes the project from Trail."),
-            Line::from("Files on disk will remain."),
+            Line::from(description),
+            Line::from(note),
             Line::from(""),
             Line::from(vec![
                 "Enter".bold(),
@@ -445,7 +463,7 @@ impl App {
         .style(theme::BASE)
         .block(
             Block::bordered()
-                .title("Delete project?")
+                .title(title)
                 .border_style(Style::new().fg(theme::ERROR)),
         );
 
@@ -546,8 +564,12 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let info_footer = Paragraph::new(Text::from_iter(INFO_TEXT))
-            .style(theme::SECONDARY)
+        let info_footer = Paragraph::new(self.err.as_deref().unwrap_or(INFO_TEXT[0]))
+            .style(if self.err.is_some() {
+                Style::new().fg(theme::ERROR)
+            } else {
+                theme::SECONDARY
+            })
             .centered()
             .block(Block::bordered().border_style(theme::border(false)));
 
@@ -564,7 +586,7 @@ impl App {
             Line::from("Enter: open selected project (Projects focused)"),
             Line::from("Ctrl+h: focus Projects"),
             Line::from("Ctrl+l: focus Latest Update"),
-            Line::from("D: delete selected project (Projects focused)"),
+            Line::from("d: delete selected project (Projects focused)"),
             Line::from("a: new update"),
             Line::from("u: update table (requires an open project)"),
             Line::from(""),
@@ -572,6 +594,7 @@ impl App {
             Line::from("j / Down, k / Up: select row"),
             Line::from("h / Left, l / Right: select column"),
             Line::from("Enter: open selected update"),
+            Line::from("d: delete selected update"),
             Line::from("Esc: return"),
             Line::from("q: quit"),
             Line::from(""),
@@ -584,7 +607,7 @@ impl App {
             Line::from("Esc: cancel"),
             Line::from(""),
             Line::from("Delete confirmation").style(theme::HEADING),
-            Line::from("Enter: delete project from Trail"),
+            Line::from("Enter: confirm deletion"),
             Line::from("Esc: cancel"),
             Line::from(""),
             Line::from("Help").style(theme::HEADING),

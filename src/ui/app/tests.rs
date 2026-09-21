@@ -44,6 +44,7 @@ fn setup() -> (App, Input, Connection) {
             opened_project_id: None,
             opened_update_id: None,
             pending_project_delete_id: None,
+            pending_update_delete_id: None,
             focused_pane: BrowserPane::Projects,
             err: None,
             exit: false,
@@ -442,7 +443,7 @@ fn deleting_selected_project_only_closes_it_if_opened() {
         }
         app.err = Some("Previous delete failed".into());
 
-        press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+        press(&mut app, &mut input, &conn, KeyCode::Char('d'));
         press(&mut app, &mut input, &conn, KeyCode::Enter);
 
         let saved = sqlite::get_projects(&conn).unwrap();
@@ -469,7 +470,7 @@ fn deleting_last_project_clears_browser_selection() {
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     focus_projects(&mut app, &mut input, &conn);
 
-    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
     assert!(sqlite::get_projects(&conn).unwrap().is_empty());
@@ -478,7 +479,7 @@ fn deleting_last_project_clears_browser_selection() {
     assert_eq!(app.opened_project_id, None);
     assert!(app.err.is_none());
 
-    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     assert_eq!(app.project_selection.selected(), None);
     assert!(app.err.is_none());
@@ -497,7 +498,7 @@ fn failed_delete_preserves_browser_and_displays_error() {
     )
     .unwrap();
 
-    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 2);
@@ -525,7 +526,7 @@ fn delete_confirmation_blocks_browser_keys_and_escape_cancels() {
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     focus_projects(&mut app, &mut input, &conn);
-    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
 
     assert_eq!(app.pending_project_delete_id.as_deref(), Some("a"));
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 2);
@@ -536,7 +537,7 @@ fn delete_confirmation_blocks_browser_keys_and_escape_cancels() {
         KeyCode::Char('k'),
         KeyCode::Char('A'),
         KeyCode::Char('q'),
-        KeyCode::Char('D'),
+        KeyCode::Char('d'),
     ] {
         press(&mut app, &mut input, &conn, key);
     }
@@ -563,7 +564,7 @@ fn delete_confirmation_uses_original_id_after_list_reorders() {
     let (mut app, mut input, conn) = browser();
     seed_projects(&conn);
     app.reload_projects(&conn).unwrap();
-    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     app.projects.swap(0, 1);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
@@ -646,7 +647,7 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
             .unwrap();
         }
 
-        press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+        press(&mut app, &mut input, &conn, KeyCode::Char('d'));
         assert_eq!(app.updates.len(), 2);
         assert_eq!(app.opened_update_id.as_deref(), Some("older"));
         press(
@@ -978,4 +979,76 @@ fn shift_enter_adds_newlines_only_to_body_and_next_and_saves_them() {
     .unwrap();
     assert!(input.project_step == ProjectStep::Directory);
     assert!(input.input.is_empty());
+}
+
+#[test]
+fn update_delete_confirmation_blocks_keys_and_cancel_preserves_data() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    assert_eq!(app.pending_update_delete_id.as_deref(), Some("latest"));
+    for key in [KeyCode::Down, KeyCode::Right, KeyCode::Char('d'), KeyCode::Char('q')] {
+        press(&mut app, &mut input, &conn, key);
+    }
+    assert_eq!(app.update_selection.selected(), Some(0));
+    assert_eq!(app.pending_update_delete_id.as_deref(), Some("latest"));
+    assert!(!app.exit);
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(app.pending_update_delete_id.is_none());
+    assert!(app.show_update_table);
+    assert_eq!(app.updates.len(), 2);
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+}
+
+#[test]
+fn confirmed_update_delete_uses_original_id_and_handles_last_update() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.opened_update_id = Some("latest".into());
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    app.updates.swap(0, 1);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.pending_update_delete_id.is_none());
+    assert!(app.opened_update_id.is_none());
+    assert!(app.show_update_table);
+    assert_eq!(app.updates.len(), 1);
+    assert_eq!(app.updates[0].id, "older");
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap()[0].id, "older");
+    assert_eq!(sqlite::get_updates(&conn, "b").unwrap().len(), 1);
+    assert_eq!(app.update_selection.selected(), Some(0));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.updates.is_empty());
+    assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
+    assert_eq!(app.update_selection.selected(), None);
+    assert_eq!(app.update_selection.selected_column(), None);
+    assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    assert!(app.pending_update_delete_id.is_none());
+}
+
+#[test]
+fn update_delete_ignores_missing_selection_and_preserves_data_on_failure() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    for selection in [None, Some(10)] {
+        app.update_selection.select(selection);
+        press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+        assert!(app.pending_update_delete_id.is_none());
+    }
+    conn.execute_batch(
+        "CREATE TRIGGER fail_delete_update BEFORE DELETE ON updates
+         BEGIN SELECT RAISE(FAIL, 'forced delete failure'); END;",
+    ).unwrap();
+    app.update_selection.select(Some(1));
+    app.opened_update_id = Some("older".into());
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.pending_update_delete_id.is_none());
+    assert!(app.err.as_deref().unwrap().contains("forced delete failure"));
+    assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+    assert_eq!(app.update_selection.selected(), Some(1));
+    assert_eq!(app.updates.len(), 2);
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
 }
