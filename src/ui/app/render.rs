@@ -1,13 +1,13 @@
 use super::{App, BrowserPane};
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
-    ui::input,
+    ui::{input, theme},
 };
 use chrono::Local;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
         Block, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap,
@@ -19,6 +19,7 @@ const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame, text_in: &mut input::Input) {
+        frame.render_widget(Block::new().style(theme::BASE), frame.area());
         if self.show_project_input
             && (text_in.project_step == ProjectStep::Name
                 || text_in.project_step == ProjectStep::Directory)
@@ -93,9 +94,9 @@ impl App {
         );
         let color = if text_in.input.is_empty() {
             lines = wrapped_input(placeholder, usize::MAX, usize::from(width - 2)).0;
-            Color::DarkGray
+            theme::MUTED
         } else {
-            Color::Yellow
+            theme::TEXT
         };
         let help = if multiline {
             "Enter: continue | Esc: cancel | Shift+Enter: new line"
@@ -110,6 +111,7 @@ impl App {
         let help = Paragraph::new(Text::from(
             help_lines.into_iter().map(Line::from).collect::<Vec<_>>(),
         ))
+        .style(theme::SECONDARY)
         .centered();
         let height = (lines.len() + 2).min(usize::from(
             area.height.saturating_sub(help_height + error_height),
@@ -131,14 +133,21 @@ impl App {
                 .collect::<Vec<_>>(),
         ))
         .fg(color);
-        frame.render_widget(content.block(Block::bordered().title(title)), input_area);
+        frame.render_widget(
+            content.block(
+                Block::bordered()
+                    .title(title)
+                    .border_style(theme::border(true)),
+            ),
+            input_area,
+        );
         frame.render_widget(
             help,
             Rect::new(input_area.x, input_area.bottom(), width, help_height),
         );
         if let Some(error) = &self.err {
             frame.render_widget(
-                Paragraph::new(error.as_str()).red().centered(),
+                Paragraph::new(error.as_str()).fg(theme::ERROR).centered(),
                 Rect::new(
                     input_area.x,
                     input_area.bottom() + help_height,
@@ -171,7 +180,8 @@ impl App {
         ];
 
         if let Some(error) = &self.err {
-            let message = Paragraph::new(error.to_string()).style(Style::default().fg(Color::Red));
+            let message =
+                Paragraph::new(error.to_string()).style(Style::default().fg(theme::ERROR));
             frame.render_widget(message, error_area);
         }
 
@@ -182,7 +192,7 @@ impl App {
         let directory_msg = vec!["Directory: ".into(), directory.bold()];
 
         let help_text = Text::from(Line::from(help_msg)).patch_style(Style::default());
-        let help_message = Paragraph::new(help_text);
+        let help_message = Paragraph::new(help_text).style(theme::SECONDARY);
         let name_text = Text::from(Line::from(name_msg)).patch_style(Style::default());
         let name_message = Paragraph::new(name_text);
         let directory_text = Text::from(Line::from(directory_msg)).patch_style(Style::default());
@@ -210,7 +220,8 @@ impl App {
         ];
 
         if let Some(error) = &self.err {
-            let message = Paragraph::new(error.to_string()).style(Style::default().fg(Color::Red));
+            let message =
+                Paragraph::new(error.to_string()).style(Style::default().fg(theme::ERROR));
             frame.render_widget(message, error_area);
         }
 
@@ -219,7 +230,7 @@ impl App {
         let next = text_in.update.next.as_deref().unwrap_or("(missing)");
 
         let help_text = Text::from(Line::from(help_msg)).patch_style(Style::default());
-        let help_message = Paragraph::new(help_text);
+        let help_message = Paragraph::new(help_text).style(theme::SECONDARY);
         let details = Paragraph::new(format!("Title: {title}\nBody: {body}\nNext: {next}"))
             .wrap(Wrap { trim: false });
 
@@ -234,7 +245,7 @@ impl App {
         let [error_area, help_area] = frame.area().layout(&layout);
 
         if let Some(error) = &self.err {
-            let message = Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red));
+            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
 
             frame.render_widget(message, error_area);
         }
@@ -250,7 +261,11 @@ impl App {
             Style::default(),
         );
         let text = Text::from(Line::from(msg)).patch_style(style);
-        let help_message = Paragraph::new(text).block(Block::bordered().title("Get Started!"));
+        let help_message = Paragraph::new(text).block(
+            Block::bordered()
+                .title("Get Started!")
+                .border_style(theme::border(true)),
+        );
         frame.render_widget(help_message, help_area);
     }
 
@@ -264,7 +279,7 @@ impl App {
         ]));
 
         if let Some(error) = &self.err {
-            let message = Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red));
+            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
 
             frame.render_widget(message, error_area);
         }
@@ -280,17 +295,19 @@ impl App {
             .map(|project| ListItem::new(project.name.as_str()))
             .collect();
 
-        let projects_border_colour = if self.focused_pane == BrowserPane::Projects {
-            Color::Yellow
-        } else {
-            Color::Reset
-        };
-
-        let list = List::new(projects).highlight_symbol("> ").block(
-            Block::bordered()
-                .title("Projects")
-                .border_style(Style::default().fg(projects_border_colour)),
-        );
+        let projects_focused = self.focused_pane == BrowserPane::Projects;
+        let list = List::new(projects)
+            .highlight_symbol("> ")
+            .highlight_style(theme::ROW.fg(if projects_focused {
+                theme::ACCENT
+            } else {
+                theme::MUTED
+            }))
+            .block(
+                Block::bordered()
+                    .title("Projects")
+                    .border_style(theme::border(projects_focused)),
+            );
         frame.render_stateful_widget(list, project_list_area, &mut self.project_selection);
 
         let opened_update = self
@@ -320,19 +337,17 @@ impl App {
                 "Title: {}\nBody: {}\nWhat to do next: {}",
                 update.title, update.body, update.next,
             ));
-            text.lines
-                .extend([Line::from(created_at_msg), Line::from(updated_at_msg)]);
-
-            let latest_update_border_colour = if self.focused_pane == BrowserPane::LatestUpdate {
-                Color::Yellow
-            } else {
-                Color::Reset
-            };
+            text.lines.extend([
+                Line::from(created_at_msg).style(theme::SECONDARY),
+                Line::from(updated_at_msg).style(theme::SECONDARY),
+            ]);
 
             let details = Paragraph::new(text).wrap(Wrap { trim: false }).block(
                 Block::bordered()
                     .title(update.title.as_str())
-                    .border_style(Style::default().fg(latest_update_border_colour)),
+                    .border_style(theme::border(
+                        self.focused_pane == BrowserPane::LatestUpdate,
+                    )),
             );
 
             frame.render_widget(details, latest_update_area);
@@ -343,7 +358,11 @@ impl App {
                     Style::default(),
                 );
                 let text = Text::from(Line::from(msg)).patch_style(style);
-                let project_message = Paragraph::new(text).block(Block::bordered());
+                let project_message = Paragraph::new(text).style(theme::SECONDARY).block(
+                    Block::bordered().border_style(theme::border(
+                        self.focused_pane == BrowserPane::LatestUpdate,
+                    )),
+                );
                 frame.render_widget(project_message, latest_update_area);
             } else {
                 let (msg, style) = (
@@ -356,9 +375,13 @@ impl App {
                 );
 
                 let text = Text::from(Line::from(msg)).patch_style(style);
-                let project_message = Paragraph::new(text)
-                    .wrap(Wrap { trim: false })
-                    .block(Block::bordered().title("Latest Update"));
+                let project_message =
+                    Paragraph::new(text)
+                        .wrap(Wrap { trim: false })
+                        .style(theme::SECONDARY)
+                        .block(Block::bordered().title("Latest Update").border_style(
+                            theme::border(self.focused_pane == BrowserPane::LatestUpdate),
+                        ));
                 frame.render_widget(project_message, latest_update_area);
             }
         }
@@ -384,7 +407,7 @@ impl App {
             Style::default(),
         );
         let text = Text::from(Line::from(msg)).patch_style(style);
-        let help_message = Paragraph::new(text);
+        let help_message = Paragraph::new(text).style(theme::SECONDARY);
         frame.render_widget(help_message, help_area);
     }
 
@@ -419,7 +442,12 @@ impl App {
                 ": cancel".into(),
             ]),
         ])
-        .block(Block::bordered().title("Delete project?"));
+        .style(theme::BASE)
+        .block(
+            Block::bordered()
+                .title("Delete project?")
+                .border_style(Style::new().fg(theme::ERROR)),
+        );
 
         frame.render_widget(Clear, popup);
         frame.render_widget(message, popup);
@@ -428,7 +456,8 @@ impl App {
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         if self.updates.is_empty() {
             frame.render_widget(
-                Paragraph::new("No updates are available for this project."),
+                Paragraph::new("No updates are available for this project.")
+                    .style(theme::SECONDARY),
                 area,
             );
             return;
@@ -442,14 +471,19 @@ impl App {
         let max_offset = self.updates.len().saturating_sub(visible_rows);
         *self.update_selection.offset_mut() = self.update_selection.offset().min(max_offset);
 
-        let header_style = Style::default();
-        let selected_row_style = Style::default().add_modifier(Modifier::REVERSED);
-
         let header = ["Title", "Body", "Next", "Created At", "Updated At"]
             .into_iter()
-            .map(Cell::from)
+            .enumerate()
+            .map(|(column, title)| {
+                Cell::from(title).style(
+                    if self.update_selection.selected_column() == Some(column) {
+                        theme::CELL
+                    } else {
+                        theme::HEADING
+                    },
+                )
+            })
             .collect::<Row>()
-            .style(header_style)
             .height(1);
         let rows = self.updates.iter().map(|data| {
             [
@@ -476,12 +510,9 @@ impl App {
             ],
         )
         .header(header)
-        .row_highlight_style(selected_row_style)
-        .cell_highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
+        .row_highlight_style(theme::ROW)
+        .column_highlight_style(theme::COLUMN)
+        .cell_highlight_style(theme::CELL)
         .highlight_symbol(Text::from(vec![
             "".into(),
             bar.into(),
@@ -505,6 +536,8 @@ impl App {
         frame.render_stateful_widget(
             Scrollbar::default()
                 .orientation(ratatui::widgets::ScrollbarOrientation::VerticalRight)
+                .thumb_style(Style::new().fg(theme::ACCENT))
+                .track_style(Style::new().fg(theme::BORDER))
                 .begin_symbol(None)
                 .end_symbol(None),
             scrollbar_area,
@@ -514,16 +547,16 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let info_footer = Paragraph::new(Text::from_iter(INFO_TEXT))
-            .style(Style::new())
+            .style(theme::SECONDARY)
             .centered()
-            .block(Block::bordered().border_style(Style::new()));
+            .block(Block::bordered().border_style(theme::border(false)));
 
         frame.render_widget(info_footer, area);
     }
 
     fn render_help_window(&self, frame: &mut Frame) {
         let help = Paragraph::new(vec![
-            Line::from("Browser".yellow().bold()),
+            Line::from("Browser").style(theme::HEADING),
             Line::from("A: new project"),
             Line::from("?: help"),
             Line::from("q: quit"),
@@ -535,14 +568,14 @@ impl App {
             Line::from("a: new update"),
             Line::from("u: update table (requires an open project)"),
             Line::from(""),
-            Line::from("Update table".yellow().bold()),
+            Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
             Line::from("h / Left, l / Right: select column"),
             Line::from("Enter: open selected update"),
             Line::from("Esc: return"),
             Line::from("q: quit"),
             Line::from(""),
-            Line::from("Project and update forms".yellow().bold()),
+            Line::from("Project and update forms").style(theme::HEADING),
             Line::from("Type: insert text"),
             Line::from("Left / Right: move cursor"),
             Line::from("Backspace: delete previous character"),
@@ -550,15 +583,19 @@ impl App {
             Line::from("Shift+Enter: new line in update body / next"),
             Line::from("Esc: cancel"),
             Line::from(""),
-            Line::from("Delete confirmation".yellow().bold()),
+            Line::from("Delete confirmation").style(theme::HEADING),
             Line::from("Enter: delete project from Trail"),
             Line::from("Esc: cancel"),
             Line::from(""),
-            Line::from("Help".yellow().bold()),
+            Line::from("Help").style(theme::HEADING),
             Line::from("Esc / ?: return"),
             Line::from("q: quit"),
         ])
-        .block(Block::bordered().title("Trail keybindings"))
+        .block(
+            Block::bordered()
+                .title("Trail keybindings")
+                .border_style(theme::border(true)),
+        )
         .wrap(Wrap { trim: false });
 
         frame.render_widget(help, frame.area());

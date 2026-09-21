@@ -1,10 +1,13 @@
 use super::*;
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
-    ui::input::{Input, InputMode},
+    ui::{
+        input::{Input, InputMode},
+        theme,
+    },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Color};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use std::{fs, path::PathBuf};
 
 struct TestDirectory(PathBuf);
@@ -349,12 +352,12 @@ fn opened_project_survives_navigation_and_pane_switches() {
 
     let buffer = render_browser(&mut app, &mut input);
     assert!(screen_text(&buffer).contains("Body: Beta body"));
-    assert_eq!(buffer[(0, 0)].fg, Color::Yellow);
-    assert_eq!(buffer[(30, 0)].fg, Color::Reset);
+    assert_eq!(buffer[(0, 0)].fg, theme::ACCENT);
+    assert_eq!(buffer[(20, 0)].fg, theme::BORDER);
 
     for (key, pane, left, right) in [
-        ('l', BrowserPane::LatestUpdate, Color::Reset, Color::Yellow),
-        ('h', BrowserPane::Projects, Color::Yellow, Color::Reset),
+        ('l', BrowserPane::LatestUpdate, theme::BORDER, theme::ACCENT),
+        ('h', BrowserPane::Projects, theme::ACCENT, theme::BORDER),
     ] {
         app.handle_key_event(
             KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL),
@@ -365,9 +368,9 @@ fn opened_project_survives_navigation_and_pane_switches() {
         assert!(app.focused_pane == pane);
         let buffer = render_browser(&mut app, &mut input);
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(30, 0)].symbol(), "┌");
+        assert_eq!(buffer[(20, 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 0)].fg, left);
-        assert_eq!(buffer[(30, 0)].fg, right);
+        assert_eq!(buffer[(20, 0)].fg, right);
         assert_eq!(app.opened_project_id.as_deref(), Some("b"));
 
         if app.focused_pane == BrowserPane::LatestUpdate {
@@ -457,7 +460,7 @@ fn failed_load_preserves_browser_state_and_errors_are_visible() {
         let buffer = render_browser(&mut app, &mut input);
         assert!(screen_text(&buffer).contains(app.err.as_deref().unwrap()));
         let row = if populated { 10 } else { 0 };
-        assert_eq!(buffer[(0, row)].fg, Color::Red);
+        assert_eq!(buffer[(0, row)].fg, theme::ERROR);
     }
 }
 
@@ -491,7 +494,7 @@ fn successful_save_with_failed_refresh_keeps_error_visible() {
     );
     let buffer = render_browser(&mut app, &mut input);
     assert!(screen_text(&buffer).contains("Couldn't load projects:"));
-    assert_eq!(buffer[(0, 0)].fg, Color::Red);
+    assert_eq!(buffer[(0, 0)].fg, theme::ERROR);
 }
 
 #[test]
@@ -587,7 +590,7 @@ fn failed_delete_preserves_browser_and_displays_error() {
     let buffer = render_browser(&mut app, &mut input);
     assert!(screen_text(&buffer).contains(app.err.as_deref().unwrap()));
     assert!(screen_text(&buffer).contains("Body: Beta body"));
-    assert_eq!(buffer[(0, 10)].fg, Color::Red);
+    assert_eq!(buffer[(0, 10)].fg, theme::ERROR);
 }
 
 #[test]
@@ -1278,7 +1281,7 @@ fn input_forms_show_placeholders_centered_with_help_below() {
             help.contains("Shift+Enter"),
             !project && input.update_step != UpdateStep::Title
         );
-        assert_eq!(buffer[(15, 11)].fg, Color::DarkGray);
+        assert_eq!(buffer[(15, 11)].fg, theme::MUTED);
     }
 }
 
@@ -1384,4 +1387,69 @@ fn shift_enter_adds_newlines_only_to_body_and_next_and_saves_them() {
     .unwrap();
     assert!(input.project_step == ProjectStep::Directory);
     assert!(input.input.is_empty());
+}
+
+#[test]
+fn theme_distinguishes_table_row_column_and_cell_after_navigation() {
+    use ratatui::style::Modifier;
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    app.update_selection.select(Some(0));
+    app.update_selection.select_column(Some(0));
+    let before = render_browser(&mut app, &mut input);
+    for style in [theme::ROW, theme::COLUMN, theme::CELL] {
+        assert!(before.content.iter().any(|cell| Some(cell.bg) == style.bg));
+    }
+    assert!(
+        before
+            .content
+            .iter()
+            .all(|cell| !cell.modifier.contains(Modifier::REVERSED))
+    );
+    assert_eq!(before[(3, 2)].bg, theme::ACCENT);
+    assert_eq!(before[(3, 2)].fg, theme::BACKGROUND);
+    assert!(before[(3, 2)].modifier.contains(Modifier::BOLD));
+    assert_eq!(before[(3, 0)].bg, theme::ACCENT);
+
+    press(&mut app, &mut input, &conn, KeyCode::Right);
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    let after = render_browser(&mut app, &mut input);
+    assert_eq!(after[(3, 2)].bg, theme::BACKGROUND);
+    assert_eq!(after[(3, 0)].fg, theme::ACCENT);
+    assert_ne!(after[(3, 0)].bg, theme::ACCENT);
+    for style in [theme::ROW, theme::COLUMN, theme::CELL] {
+        assert!(after.content.iter().any(|cell| Some(cell.bg) == style.bg));
+    }
+}
+
+#[test]
+fn theme_covers_focus_empty_panes_forms_and_delete_popup() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
+    let focused = render_browser(&mut app, &mut input);
+    assert_eq!(focused[(2, 1)].fg, theme::ACCENT);
+    assert_eq!(Some(focused[(2, 1)].bg), theme::ROW.bg);
+    app.focused_pane = BrowserPane::LatestUpdate;
+    app.updates.clear();
+    let empty = render_browser(&mut app, &mut input);
+    assert_eq!(empty[(2, 1)].fg, theme::MUTED);
+    assert_eq!(empty[(20, 0)].fg, theme::ACCENT);
+    assert_eq!(empty[(21, 1)].fg, theme::MUTED);
+    assert_eq!(empty[(99, 11)].bg, theme::BACKGROUND);
+
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    let popup = render_browser(&mut app, &mut input);
+    assert_eq!(popup[(20, 2)].fg, theme::ERROR);
+    assert_eq!(popup[(21, 3)].fg, theme::TEXT);
+    assert_eq!(popup[(21, 3)].bg, theme::BACKGROUND);
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
+    let form = render_browser(&mut app, &mut input);
+    assert_eq!(form[(14, 4)].fg, theme::ACCENT);
+    assert_eq!(form[(15, 5)].fg, theme::MUTED);
+    press(&mut app, &mut input, &conn, KeyCode::Char('X'));
+    let typed = render_browser(&mut app, &mut input);
+    assert_eq!(typed[(15, 5)].fg, theme::TEXT);
+    assert_eq!(typed[(15, 5)].bg, theme::BACKGROUND);
 }
