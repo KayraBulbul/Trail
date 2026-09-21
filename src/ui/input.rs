@@ -1,13 +1,10 @@
-use std::path::{Path, PathBuf};
-use std::{env, fs, io};
-
-use rusqlite::{Connection, Result};
-
-use crate::types::update::{UpdateDraft, UpdateStep};
-use crate::{
-    database::sqlite,
-    types::project::{ProjectDraft, ProjectStep},
+use crate::types::{
+    project::{ProjectDraft, ProjectStep},
+    update::{UpdateDraft, UpdateStep},
 };
+
+mod projectform;
+mod updateform;
 
 pub struct Input {
     pub input: String,
@@ -92,18 +89,6 @@ impl Input {
         self.character_index = 0;
     }
 
-    fn reset_project(&mut self) {
-        self.project.name = None;
-        self.project.directory = None;
-    }
-
-    fn reset_update(&mut self) {
-        self.update.title = None;
-        self.update.project_id = None;
-        self.update.body = None;
-        self.update.next = None;
-    }
-
     pub fn reset_all(&mut self) {
         self.input.clear();
         self.reset_cursor();
@@ -111,113 +96,5 @@ impl Input {
         self.reset_update();
         self.project_step = ProjectStep::Name;
         self.update_step = UpdateStep::Title;
-    }
-
-    pub fn submit_name(&mut self) {
-        if self.input.trim().chars().count() > 0 {
-            self.project.name = Some(self.input.clone());
-        }
-
-        self.input.clear();
-        self.reset_cursor();
-    }
-
-    pub fn submit_directory(&mut self) {
-        if self.input.trim().chars().count() > 0 {
-            self.project.directory = Some(self.input.clone());
-        }
-        if self.project.name.is_none() {
-            self.project.name = Path::new(&self.input)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned());
-        }
-
-        self.input.clear();
-        self.reset_cursor();
-    }
-
-    pub fn submit_project(&mut self, conn: &Connection) -> Result<String> {
-        let id = sqlite::insert_project(conn, &self.project)?;
-
-        self.project_step = ProjectStep::Name;
-        self.reset_project();
-
-        Ok(id)
-    }
-
-    pub fn validate_path(&self) -> io::Result<()> {
-        let directory = self.project.directory.as_deref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "Please enter a directory.")
-        })?;
-
-        let path = if directory == "~" || directory.starts_with("~/") {
-            let home = env::home_dir().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "Could not determine your home directory.",
-                )
-            })?;
-
-            if directory == "~" {
-                home
-            } else {
-                home.join(&directory[2..])
-            }
-        } else {
-            PathBuf::from(directory)
-        };
-
-        let abs_path = fs::canonicalize(path)?;
-        let attr = fs::metadata(&abs_path)?;
-
-        if !attr.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "The selected path is not a directory.",
-            ));
-        }
-
-        Ok(())
-    }
-
-    pub fn submit_title(&mut self) {
-        if self.input.trim().chars().count() > 0 {
-            self.update.title = Some(self.input.clone());
-        }
-
-        self.input.clear();
-        self.reset_cursor();
-    }
-
-    pub fn submit_body(&mut self) {
-        if self.input.trim().chars().count() > 0 {
-            self.update.body = Some(self.input.clone());
-        }
-
-        self.input.clear();
-        self.reset_cursor();
-    }
-
-    pub fn submit_next(&mut self) {
-        if self.input.trim().chars().count() > 0 {
-            self.update.next = Some(self.input.clone());
-        }
-
-        if self.update.next.is_none() {
-            self.update.next = Some(String::from("None"));
-        }
-
-        self.input.clear();
-        self.reset_cursor();
-    }
-
-    pub fn submit_update(&mut self, conn: &Connection, project_id: String) -> Result<String> {
-        self.update.project_id = Some(project_id.clone());
-        let id = sqlite::insert_update(conn, &self.update)?;
-
-        self.update_step = UpdateStep::Title;
-        self.reset_update();
-
-        Ok(id)
     }
 }
