@@ -1,4 +1,4 @@
-use ratatui::widgets::ListState;
+use ratatui::widgets::{ListState, TableState};
 
 use crate::ui::app::BrowserPane;
 
@@ -13,10 +13,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = ui::app::App {
         show_project_input: false,
         show_update_input: false,
+        show_update_table: false,
+        show_help: false,
         projects: Vec::new(),
         updates: Vec::new(),
         project_selection: ListState::default(),
-        update_selection: ListState::default(),
+        update_selection: TableState::default(),
         opened_project_id: None,
         opened_update_id: None,
         pending_project_delete_id: None,

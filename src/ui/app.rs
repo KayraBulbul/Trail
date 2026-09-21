@@ -1,11 +1,14 @@
 use crate::{
     database::sqlite,
     types::{project::Project, update::Update},
-    ui::input,
+    ui::input::Input,
 };
 
 use crossterm::event::Event;
-use ratatui::{DefaultTerminal, widgets::ListState};
+use ratatui::{
+    DefaultTerminal,
+    widgets::{ListState, TableState},
+};
 use rusqlite::{Connection, Result};
 use std::io;
 
@@ -19,15 +22,16 @@ mod tests;
 pub enum BrowserPane {
     Projects,
     LatestUpdate,
-    Updates,
 }
 
 pub struct App {
     pub show_project_input: bool,
     pub show_update_input: bool,
+    pub show_update_table: bool,
+    pub show_help: bool,
     pub projects: Vec<Project>,
     pub updates: Vec<Update>,
-    pub update_selection: ListState,
+    pub update_selection: TableState,
     pub project_selection: ListState,
     pub opened_project_id: Option<String>,
     pub opened_update_id: Option<String>,
@@ -39,7 +43,7 @@ pub struct App {
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal, conn: &Connection) -> io::Result<()> {
-        let mut text_in = input::Input::new();
+        let mut text_in = Input::new();
 
         if let Err(err) = self.reload_projects(conn) {
             self.err = Some(format!("Couldn't load projects: {err}"));
@@ -81,7 +85,7 @@ impl App {
 
     fn clear_updates(&mut self) {
         self.updates.clear();
-        self.update_selection = ListState::default();
+        self.update_selection = TableState::default();
         self.opened_update_id = None;
     }
 

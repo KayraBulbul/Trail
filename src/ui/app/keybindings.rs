@@ -187,6 +187,59 @@ impl App {
                     }
                     _ => {}
                 }
+            } else if self.show_update_table {
+                match key_event.code {
+                    KeyCode::Esc => self.show_update_table = false,
+                    KeyCode::Char('q') => self.exit = true,
+                    KeyCode::Char('j') | KeyCode::Down if !self.updates.is_empty() => {
+                        let index = match self.update_selection.selected() {
+                            Some(index) => index.saturating_add(1).min(self.updates.len() - 1),
+                            None => 0,
+                        };
+                        self.update_selection.select(Some(index));
+                    }
+                    KeyCode::Char('k') | KeyCode::Up if !self.updates.is_empty() => {
+                        let index = self
+                            .update_selection
+                            .selected()
+                            .unwrap_or(0)
+                            .saturating_sub(1);
+                        self.update_selection.select(Some(index));
+                    }
+                    KeyCode::Char('h') | KeyCode::Left if !self.updates.is_empty() => {
+                        let column = self
+                            .update_selection
+                            .selected_column()
+                            .unwrap_or(0)
+                            .saturating_sub(1);
+                        self.update_selection.select_column(Some(column));
+                    }
+                    KeyCode::Char('l') | KeyCode::Right if !self.updates.is_empty() => {
+                        let column = match self.update_selection.selected_column() {
+                            Some(column) => (column + 1).min(4),
+                            None => 0,
+                        };
+                        self.update_selection.select_column(Some(column));
+                    }
+                    KeyCode::Enter => {
+                        if let Some(update) = self
+                            .update_selection
+                            .selected()
+                            .and_then(|index| self.updates.get(index))
+                        {
+                            self.opened_update_id = Some(update.id.clone());
+                            self.show_update_table = false;
+                            self.focused_pane = BrowserPane::LatestUpdate;
+                        }
+                    }
+                    _ => {}
+                }
+            } else if self.show_help {
+                match key_event.code {
+                    KeyCode::Esc | KeyCode::Char('?') => self.show_help = false,
+                    KeyCode::Char('q') => self.exit = true,
+                    _ => {}
+                }
             } else {
                 match key_event.code {
                     // New Project
@@ -221,40 +274,9 @@ impl App {
 
                         self.project_selection.select(Some(index));
                     }
-                    // Down on updates list
-                    KeyCode::Char('j') | KeyCode::Down
-                        if self.focused_pane == BrowserPane::Updates
-                            && !self.updates.is_empty() =>
-                    {
-                        let index = match self.update_selection.selected() {
-                            Some(index) => index.saturating_add(1).min(self.updates.len() - 1),
-                            None => 0,
-                        };
-
-                        self.update_selection.select(Some(index));
-                    }
-                    // Up on projects list
-                    KeyCode::Char('k') | KeyCode::Up
-                        if self.focused_pane == BrowserPane::Updates
-                            && !self.updates.is_empty() =>
-                    {
-                        let index = match self.update_selection.selected() {
-                            Some(index) => index.saturating_sub(1),
-                            None => 0,
-                        };
-
-                        self.update_selection.select(Some(index));
-                    }
-                    // Open update
-                    KeyCode::Enter if self.focused_pane == BrowserPane::Updates => {
-                        if let Some(update) = self
-                            .update_selection
-                            .selected()
-                            .and_then(|index| self.updates.get(index))
-                        {
-                            self.opened_update_id = Some(update.id.clone());
-                            self.focused_pane = BrowserPane::LatestUpdate;
-                        }
+                    // Open updates table
+                    KeyCode::Char('u') if !self.opened_project_id.is_none() => {
+                        self.show_update_table = true;
                     }
                     // Open project
                     KeyCode::Enter if self.focused_pane == BrowserPane::Projects => {
@@ -270,28 +292,16 @@ impl App {
                                     "Error retrieving updates for this project: {error}"
                                 ))
                             }
-                            if !self.updates.is_empty() {
-                                self.focused_pane = BrowserPane::LatestUpdate;
-                            } else {
-                                self.focused_pane = BrowserPane::Updates;
-                            }
+                            self.focused_pane = BrowserPane::LatestUpdate;
                         }
                     }
                     // Left pane
                     KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if self.focused_pane == BrowserPane::Updates {
-                            self.focused_pane = BrowserPane::LatestUpdate;
-                        } else if self.focused_pane == BrowserPane::LatestUpdate {
-                            self.focused_pane = BrowserPane::Projects;
-                        }
+                        self.focused_pane = BrowserPane::Projects;
                     }
                     // Right pane
                     KeyCode::Char('l') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if self.focused_pane == BrowserPane::Projects {
-                            self.focused_pane = BrowserPane::LatestUpdate;
-                        } else if self.focused_pane == BrowserPane::LatestUpdate {
-                            self.focused_pane = BrowserPane::Updates;
-                        }
+                        self.focused_pane = BrowserPane::LatestUpdate;
                     }
                     // Delete project
                     KeyCode::Char('D')
@@ -308,6 +318,10 @@ impl App {
                         self.show_update_input = true;
                         self.err = None;
                         text_in.input_mode = InputMode::Editing;
+                    }
+                    // Help window
+                    KeyCode::Char('?') => {
+                        self.show_help = true;
                     }
                     _ => {}
                 }

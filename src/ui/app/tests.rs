@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
-    ui::input::InputMode,
+    ui::input::{Input, InputMode},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Color};
@@ -29,15 +29,17 @@ impl Drop for TestDirectory {
     }
 }
 
-fn setup() -> (App, input::Input, Connection) {
+fn setup() -> (App, Input, Connection) {
     (
         App {
             show_project_input: true,
             show_update_input: false,
+            show_update_table: false,
+            show_help: false,
             projects: Vec::new(),
             updates: Vec::new(),
             project_selection: ListState::default(),
-            update_selection: ListState::default(),
+            update_selection: TableState::default(),
             opened_project_id: None,
             opened_update_id: None,
             pending_project_delete_id: None,
@@ -45,20 +47,29 @@ fn setup() -> (App, input::Input, Connection) {
             err: None,
             exit: false,
         },
-        input::Input {
+        Input {
             input_mode: InputMode::Editing,
-            ..input::Input::new()
+            ..Input::new()
         },
         Connection::open_in_memory().unwrap(),
     )
 }
 
-fn press(app: &mut App, input: &mut input::Input, conn: &Connection, key: KeyCode) {
+fn press(app: &mut App, input: &mut Input, conn: &Connection, key: KeyCode) {
     app.handle_key_event(KeyEvent::new(key, KeyModifiers::NONE), input, conn)
         .unwrap();
 }
 
-fn submit(app: &mut App, input: &mut input::Input, conn: &Connection, text: &str) {
+fn focus_projects(app: &mut App, input: &mut Input, conn: &Connection) {
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+        input,
+        conn,
+    )
+    .unwrap();
+}
+
+fn submit(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
     for ch in text.chars() {
         press(app, input, conn, KeyCode::Char(ch));
     }
@@ -254,7 +265,7 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     assert_eq!(count, 1);
 }
 
-fn browser() -> (App, input::Input, Connection) {
+fn browser() -> (App, Input, Connection) {
     let (mut app, mut input, conn) = setup();
     app.show_project_input = false;
     input.input_mode = InputMode::Normal;
@@ -271,7 +282,7 @@ fn seed_projects(conn: &Connection) {
     .unwrap();
 }
 
-fn render_browser(app: &mut App, input: &mut input::Input) -> Buffer {
+fn render_browser(app: &mut App, input: &mut Input) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
     terminal.draw(|frame| app.render(frame, input)).unwrap();
     terminal.backend().buffer().clone()
@@ -327,8 +338,10 @@ fn browser_navigation_stops_at_list_boundaries() {
 #[test]
 fn opened_project_survives_navigation_and_pane_switches() {
     let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
+    focus_projects(&mut app, &mut input, &conn);
     assert_eq!(app.opened_project_id.as_deref(), Some("b"));
     press(&mut app, &mut input, &conn, KeyCode::Up);
     assert_eq!(app.project_selection.selected(), Some(0));
@@ -337,7 +350,7 @@ fn opened_project_survives_navigation_and_pane_switches() {
     let buffer = render_browser(&mut app, &mut input);
     assert!(screen_text(&buffer).contains("Body: Beta body"));
     assert_eq!(buffer[(0, 0)].fg, Color::Yellow);
-    assert_eq!(buffer[(20, 0)].fg, Color::Reset);
+    assert_eq!(buffer[(30, 0)].fg, Color::Reset);
 
     for (key, pane, left, right) in [
         ('l', BrowserPane::LatestUpdate, Color::Reset, Color::Yellow),
@@ -352,9 +365,9 @@ fn opened_project_survives_navigation_and_pane_switches() {
         assert!(app.focused_pane == pane);
         let buffer = render_browser(&mut app, &mut input);
         assert_eq!(buffer[(0, 0)].symbol(), "┌");
-        assert_eq!(buffer[(20, 0)].symbol(), "┌");
+        assert_eq!(buffer[(30, 0)].symbol(), "┌");
         assert_eq!(buffer[(0, 0)].fg, left);
-        assert_eq!(buffer[(20, 0)].fg, right);
+        assert_eq!(buffer[(30, 0)].fg, right);
         assert_eq!(app.opened_project_id.as_deref(), Some("b"));
 
         if app.focused_pane == BrowserPane::LatestUpdate {
@@ -488,9 +501,11 @@ fn deleting_selected_project_only_closes_it_if_opened() {
         seed_projects(&conn);
         app.reload_projects(&conn).unwrap();
         press(&mut app, &mut input, &conn, KeyCode::Enter);
+        focus_projects(&mut app, &mut input, &conn);
         press(&mut app, &mut input, &conn, KeyCode::Down);
         if delete_opened {
             press(&mut app, &mut input, &conn, KeyCode::Enter);
+            focus_projects(&mut app, &mut input, &conn);
         }
         app.err = Some("Previous delete failed".into());
 
@@ -519,6 +534,7 @@ fn deleting_last_project_clears_browser_selection() {
         .unwrap();
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
+    focus_projects(&mut app, &mut input, &conn);
 
     press(&mut app, &mut input, &conn, KeyCode::Char('D'));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
@@ -539,8 +555,10 @@ fn deleting_last_project_clears_browser_selection() {
 #[test]
 fn failed_delete_preserves_browser_and_displays_error() {
     let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
+    focus_projects(&mut app, &mut input, &conn);
     conn.execute_batch(
         "CREATE TRIGGER fail_delete BEFORE DELETE ON projects
          BEGIN SELECT RAISE(FAIL, 'forced delete failure'); END;",
@@ -578,6 +596,7 @@ fn delete_confirmation_blocks_browser_keys_and_escape_cancels() {
     seed_projects(&conn);
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
+    focus_projects(&mut app, &mut input, &conn);
     press(&mut app, &mut input, &conn, KeyCode::Char('D'));
 
     assert_eq!(app.pending_project_delete_id.as_deref(), Some("a"));
@@ -664,7 +683,9 @@ fn update_details_wrap_body_and_next() {
 
     for width in [60, 100] {
         let mut terminal = Terminal::new(TestBackend::new(width, 20)).unwrap();
-        terminal.draw(|frame| app.render(frame, &mut input)).unwrap();
+        terminal
+            .draw(|frame| app.render(frame, &mut input))
+            .unwrap();
         let buffer = terminal.backend().buffer();
 
         assert!(row_containing(buffer, "BODY_END") > row_containing(buffer, "Body:"));
@@ -687,7 +708,9 @@ fn update_confirmation_wraps_body_and_next() {
 
     for width in [40, 80] {
         let mut terminal = Terminal::new(TestBackend::new(width, 16)).unwrap();
-        terminal.draw(|frame| app.render(frame, &mut input)).unwrap();
+        terminal
+            .draw(|frame| app.render(frame, &mut input))
+            .unwrap();
         let buffer = terminal.backend().buffer();
 
         assert!(row_containing(buffer, "BODY_END") > row_containing(buffer, "Body:"));
@@ -697,7 +720,7 @@ fn update_confirmation_wraps_body_and_next() {
     }
 }
 
-fn browser_with_updates() -> (App, input::Input, Connection) {
+fn browser_with_updates() -> (App, Input, Connection) {
     let (mut app, mut input, conn) = browser();
     seed_projects(&conn);
     conn.execute_batch(
@@ -717,7 +740,7 @@ fn opening_selected_update_displays_its_body_without_switching_projects() {
     let (mut app, mut input, conn) = browser_with_updates();
     app.project_selection.select(Some(1));
     app.update_selection.select(Some(1));
-    app.focused_pane = BrowserPane::Updates;
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
 
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
@@ -741,12 +764,12 @@ fn opening_selected_update_displays_its_body_without_switching_projects() {
 #[test]
 fn opening_update_without_selection_does_nothing() {
     let (mut app, mut input, conn) = browser_with_updates();
-    app.focused_pane = BrowserPane::Updates;
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
     for selected in [None, Some(10)] {
         app.update_selection.select(selected);
         press(&mut app, &mut input, &conn, KeyCode::Enter);
         assert!(app.opened_update_id.is_none());
-        assert!(app.focused_pane == BrowserPane::Updates);
+        assert!(app.show_update_table);
         assert_eq!(app.opened_project_id.as_deref(), Some("a"));
     }
 }
@@ -760,6 +783,7 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
         (true, false, false),
     ] {
         let (mut app, mut input, conn) = browser_with_updates();
+        focus_projects(&mut app, &mut input, &conn);
         app.opened_update_id = Some("older".into());
         app.update_selection.select(Some(1));
         if !delete_opened {
@@ -794,7 +818,9 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
             assert_eq!(app.opened_update_id.as_deref(), Some("older"));
             assert_eq!(app.updates.len(), 2);
             assert_eq!(app.update_selection.selected(), Some(1));
-            assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Older body"));
+            assert!(
+                screen_text(&render_browser(&mut app, &mut input)).contains("Body: Older body")
+            );
         }
         assert_eq!(app.err.is_some(), fail);
     }
@@ -814,7 +840,11 @@ fn creating_project_clears_previous_update_state() {
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
     assert!(app.err.is_none());
-    let created = app.projects.iter().find(|p| p.name == "New project").unwrap();
+    let created = app
+        .projects
+        .iter()
+        .find(|p| p.name == "New project")
+        .unwrap();
     assert_eq!(app.opened_project_id.as_deref(), Some(created.id.as_str()));
     assert!(app.updates.is_empty());
     assert!(app.opened_update_id.is_none());
@@ -942,14 +972,7 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
     conn.execute("DELETE FROM projects WHERE id = 'b'", [])
         .unwrap();
     app.reload_projects(&conn).unwrap();
-    for _ in 0..2 {
-        app.handle_key_event(
-            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
-            &mut input,
-            &conn,
-        )
-        .unwrap();
-    }
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
     for (key, expected) in [
         (KeyCode::Up, 0),
         (KeyCode::Down, 1),
@@ -961,4 +984,248 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
         assert_eq!(app.update_selection.selected(), Some(expected));
         assert_eq!(app.project_selection.selected(), Some(0));
     }
+}
+
+#[test]
+fn update_table_empty_message_does_not_replace_sixth_update() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+    app.show_update_table = true;
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert!(
+        screen_text(terminal.backend().buffer())
+            .contains("No updates are available for this project.")
+    );
+
+    for i in 0..6 {
+        app.updates.push(Update {
+            id: format!("update-{i}"),
+            project_id: "a".into(),
+            title: format!("Update {i}"),
+            body: format!("Body {i}"),
+            next: format!("Next {i}"),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        });
+    }
+
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    let text = screen_text(terminal.backend().buffer());
+    assert!(text.contains("Body 5"));
+    assert!(text.contains("Next 5"));
+    assert!(!text.to_lowercase().contains("no updates are available"));
+}
+
+#[test]
+fn update_table_keys_navigate_without_moving_projects() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    assert!(app.show_update_table);
+    for (key, expected) in [
+        (KeyCode::Up, 0),
+        (KeyCode::Char('j'), 1),
+        (KeyCode::Down, 1),
+        (KeyCode::Char('k'), 0),
+    ] {
+        press(&mut app, &mut input, &conn, key);
+        assert_eq!(app.update_selection.selected(), Some(expected));
+        assert_eq!(app.project_selection.selected(), Some(0));
+    }
+    for (key, expected) in [
+        (KeyCode::Left, 0),
+        (KeyCode::Char('l'), 1),
+        (KeyCode::Right, 2),
+        (KeyCode::Right, 3),
+        (KeyCode::Right, 4),
+        (KeyCode::Right, 4),
+        (KeyCode::Char('h'), 3),
+    ] {
+        press(&mut app, &mut input, &conn, key);
+        assert_eq!(app.update_selection.selected_column(), Some(expected));
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Char('D'));
+    assert!(app.pending_project_delete_id.is_none());
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(!app.show_update_table);
+    assert!(!app.exit);
+}
+
+#[test]
+fn update_table_enter_opens_selected_update() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(!app.show_update_table);
+    assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+    assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+    assert!(screen_text(&render_browser(&mut app, &mut input)).contains("Body: Older body"));
+}
+
+#[test]
+fn update_table_empty_navigation_and_quit() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    for key in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Enter,
+    ] {
+        press(&mut app, &mut input, &conn, key);
+        assert!(app.show_update_table);
+        assert_eq!(app.update_selection.selected(), None);
+        assert_eq!(app.update_selection.selected_column(), None);
+        assert!(app.opened_update_id.is_none());
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Char('q'));
+    assert!(app.exit);
+}
+
+#[test]
+fn browser_focus_stays_on_visible_panes() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    let selected = app.update_selection.selected();
+    for _ in 0..2 {
+        app.handle_key_event(
+            KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+            &mut input,
+            &conn,
+        )
+        .unwrap();
+        assert!(app.focused_pane == BrowserPane::LatestUpdate);
+    }
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert_eq!(app.update_selection.selected(), selected);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+    for _ in 0..2 {
+        focus_projects(&mut app, &mut input, &conn);
+        assert!(app.focused_pane == BrowserPane::Projects);
+    }
+}
+
+#[test]
+fn update_table_scrollbar_tracks_viewport_without_covering_dates() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    for i in 2..8 {
+        app.updates.push(Update {
+            id: format!("update-{i}"),
+            project_id: "a".into(),
+            title: format!("Update {i}"),
+            body: format!("Body {i}"),
+            next: format!("Next {i}"),
+            created_at: app.updates[0].created_at,
+            updated_at: app.updates[0].updated_at,
+        });
+    }
+    let mut terminal = Terminal::new(TestBackend::new(120, 21)).unwrap();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert_eq!(app.update_selection.offset(), 0);
+    let buffer = terminal.backend().buffer();
+    // Four of eight rows fit. The thumb fills half the sixteen-line track.
+    for y in 1..17 {
+        assert_eq!(buffer[(119, y)].symbol(), if y <= 8 { "█" } else { "║" });
+    }
+    assert_eq!(buffer[(118, 2)].symbol(), ":");
+
+    for _ in 0..7 {
+        press(&mut app, &mut input, &conn, KeyCode::Down);
+    }
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert_eq!(app.update_selection.offset(), 4);
+    let buffer = terminal.backend().buffer();
+    for y in 1..17 {
+        assert_eq!(buffer[(119, y)].symbol(), if y <= 8 { "║" } else { "█" });
+    }
+
+    // Resizing to fit every row removes the scrollbar without another key event.
+    terminal.backend_mut().resize(120, 40);
+    terminal.autoresize().unwrap();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert_eq!(app.update_selection.offset(), 0);
+    for y in 1..36 {
+        assert_eq!(terminal.backend().buffer()[(119, y)].symbol(), " ");
+    }
+
+    // Reloading a smaller history must not retain the previous scroll position.
+    app.reload_updates(&conn).unwrap();
+    terminal.backend_mut().resize(120, 21);
+    terminal.autoresize().unwrap();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    assert_eq!(app.update_selection.offset(), 0);
+    for y in 1..17 {
+        assert_eq!(terminal.backend().buffer()[(119, y)].symbol(), " ");
+    }
+}
+
+#[test]
+fn help_lists_controls_and_blocks_browser_actions() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal
+        .draw(|frame| app.render(frame, &mut input))
+        .unwrap();
+    let text = screen_text(terminal.backend().buffer());
+    for label in [
+        "Trail keybindings",
+        "Browser",
+        "Update table",
+        "Project and update forms",
+        "Delete confirmation",
+        "Backspace",
+        "Ctrl+h",
+        "Esc / ?",
+    ] {
+        assert!(text.contains(label), "Missing help: {label}");
+    }
+    for key in [
+        KeyCode::Char('A'),
+        KeyCode::Char('a'),
+        KeyCode::Char('D'),
+        KeyCode::Char('u'),
+        KeyCode::Down,
+        KeyCode::Enter,
+    ] {
+        press(&mut app, &mut input, &conn, key);
+    }
+    assert!(app.show_help);
+    assert!(!app.show_project_input);
+    assert!(!app.show_update_input);
+    assert!(!app.show_update_table);
+    assert!(app.pending_project_delete_id.is_none());
+    assert_eq!(app.project_selection.selected(), Some(0));
+    for close in [KeyCode::Esc, KeyCode::Char('?')] {
+        app.show_help = true;
+        press(&mut app, &mut input, &conn, close);
+        assert!(!app.show_help);
+        assert!(!app.exit);
+        assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    }
+    app.show_help = true;
+    press(&mut app, &mut input, &conn, KeyCode::Char('q'));
+    assert!(app.exit);
 }
