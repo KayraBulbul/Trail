@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 const INFO_TEXT: [&str; 1] =
-    ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (d) delete | (q) quit"];
+    ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (d) delete | (e) edit | (q) quit"];
 const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
@@ -72,7 +72,12 @@ impl App {
             UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
         let multiline = matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next);
-        self.render_input(frame, text_in, title, placeholder, multiline);
+        let title = if text_in.editing_update.is_some() {
+            format!("Edit: {title}")
+        } else {
+            title.to_string()
+        };
+        self.render_input(frame, text_in, &title, placeholder, multiline);
     }
 
     fn render_input(
@@ -217,7 +222,12 @@ impl App {
             "Esc".bold(),
             " to abort, ".into(),
             "Enter".bold(),
-            " to confirm update.".into(),
+            if text_in.editing_update.is_some() {
+                " to save changes."
+            } else {
+                " to confirm update."
+            }
+            .into(),
         ];
 
         if let Some(error) = &self.err {
@@ -311,20 +321,7 @@ impl App {
         );
         frame.render_stateful_widget(list, project_list_area, &mut self.project_selection);
 
-        let opened_update = self
-            .updates
-            .iter()
-            .find(|update| {
-                self.opened_project_id.as_deref() == Some(update.project_id.as_str())
-                    && self.opened_update_id.as_deref() == Some(update.id.as_str())
-            })
-            .or_else(|| {
-                self.updates.iter().find(|update| {
-                    self.opened_project_id.as_deref() == Some(update.project_id.as_str())
-                })
-            });
-
-        if let Some(update) = opened_update {
+        if let Some(update) = self.displayed_update() {
             let created_at_local_time = update.created_at.with_timezone(&Local);
             let updated_at_local_time = update.updated_at.with_timezone(&Local);
 
@@ -387,28 +384,15 @@ impl App {
             }
         }
 
-        let (msg, style) = (
-            vec![
-                "(".into(),
-                "A".bold(),
-                ") New project | (".into(),
-                "j/k".bold(),
-                ") Down/Up | (".into(),
-                "Enter".bold(),
-                ") Open project | (".into(),
-                "CTRL + h/l".bold(),
-                ") Switch panes | (".into(),
-                "d".bold(),
-                ") Delete project | (".into(),
-                "?".bold(),
-                ") Help | (".into(),
-                "q".bold(),
-                ") Quit".into(),
-            ],
-            Style::default(),
-        );
-        let text = Text::from(Line::from(msg)).patch_style(style);
-        let help_message = Paragraph::new(text).style(theme::SECONDARY);
+        let help = match self.focused_pane {
+            BrowserPane::Projects => {
+                "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
+            }
+            BrowserPane::LatestUpdate => {
+                "(a) new update | (e) edit | (u) table | (Ctrl+h) projects | (?) help | (q) quit"
+            }
+        };
+        let help_message = Paragraph::new(help).style(theme::SECONDARY);
         frame.render_widget(help_message, help_area);
     }
 
@@ -588,6 +572,7 @@ impl App {
             Line::from("Ctrl+l: focus Latest Update"),
             Line::from("d: delete selected project (Projects focused)"),
             Line::from("a: new update"),
+            Line::from("e: edit displayed update (Latest Update focused)"),
             Line::from("u: update table (requires an open project)"),
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
@@ -595,6 +580,7 @@ impl App {
             Line::from("h / Left, l / Right: select column"),
             Line::from("Enter: open selected update"),
             Line::from("d: delete selected update"),
+            Line::from("e: edit selected update"),
             Line::from("Esc: return"),
             Line::from("q: quit"),
             Line::from(""),

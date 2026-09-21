@@ -1,6 +1,6 @@
 use crate::types::{
     project::{ProjectDraft, ProjectStep},
-    update::{UpdateDraft, UpdateStep},
+    update::{Update, UpdateDraft, UpdateStep},
 };
 
 mod projectform;
@@ -14,6 +14,7 @@ pub struct Input {
     pub project_step: ProjectStep,
     pub update: UpdateDraft,
     pub update_step: UpdateStep,
+    pub editing_update: Option<Update>,
 }
 
 #[derive(PartialEq)]
@@ -40,6 +41,7 @@ impl Input {
                 next: None,
             },
             update_step: UpdateStep::Title,
+            editing_update: None,
         }
     }
 

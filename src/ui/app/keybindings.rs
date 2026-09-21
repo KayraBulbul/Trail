@@ -146,6 +146,7 @@ impl App {
                             self.err = Some("Must enter an update name.".to_string());
                         } else if self.err.is_none() {
                             text_in.update_step = UpdateStep::Body;
+                            text_in.prefill_update_field();
                         }
                     }
                     KeyCode::Enter if text_in.update_step == UpdateStep::Body => {
@@ -155,6 +156,7 @@ impl App {
                             self.err = Some("Must enter an update body.".to_string());
                         } else if self.err.is_none() {
                             text_in.update_step = UpdateStep::Next;
+                            text_in.prefill_update_field();
                         }
                     }
                     KeyCode::Enter if text_in.update_step == UpdateStep::Next => {
@@ -184,7 +186,6 @@ impl App {
                             }
                             Err(err) => {
                                 self.err = Some(format!("{err}. Please try again."));
-                                text_in.update_step = UpdateStep::Title;
                             }
                         }
                     }
@@ -252,6 +253,16 @@ impl App {
                             self.opened_update_id = Some(update.id.clone());
                             self.show_update_table = false;
                             self.focused_pane = BrowserPane::LatestUpdate;
+                        }
+                    }
+                    KeyCode::Char('e') => {
+                        if let Some(id) = self
+                            .update_selection
+                            .selected()
+                            .and_then(|index| self.updates.get(index))
+                            .map(|update| update.id.clone())
+                        {
+                            self.start_update_edit(conn, text_in, &id);
                         }
                     }
                     KeyCode::Char('d') => {
@@ -344,6 +355,11 @@ impl App {
                             && self.focused_pane == BrowserPane::Projects =>
                     {
                         self.pending_project_delete_id = Some(project.id.clone());
+                    }
+                    KeyCode::Char('e') if self.focused_pane == BrowserPane::LatestUpdate => {
+                        if let Some(id) = self.displayed_update().map(|update| update.id.clone()) {
+                            self.start_update_edit(conn, text_in, &id);
+                        }
                     }
                     // New update
                     KeyCode::Char('a') if !self.opened_project_id.is_none() => {

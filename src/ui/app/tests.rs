@@ -790,10 +790,8 @@ fn failed_update_save_preserves_draft_for_retry_without_duplicate_insert() {
     assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
 
     conn.execute_batch("DROP TRIGGER fail_update").unwrap();
-    // Keep the preserved fields and confirm the retry.
-    for _ in 0..4 {
-        press(&mut app, &mut input, &conn, KeyCode::Enter);
-    }
+    assert!(input.update_step == UpdateStep::Confirm);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
     assert!(app.err.is_none());
     assert!(!app.show_update_input);
     let saved = sqlite::get_updates(&conn, "a").unwrap();
@@ -1051,4 +1049,139 @@ fn update_delete_ignores_missing_selection_and_preserves_data_on_failure() {
     assert_eq!(app.update_selection.selected(), Some(1));
     assert_eq!(app.updates.len(), 2);
     assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+}
+
+#[test]
+fn edit_prefills_each_field_and_updates_the_target_without_inserting() {
+    for (table, opened, id) in [
+        (false, None, "latest"),
+        (false, Some("older"), "older"),
+        (true, None, "older"),
+    ] {
+        let (mut app, mut input, conn) = browser_with_updates();
+        app.opened_update_id = opened.map(String::from);
+        if table {
+            press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+            app.update_selection.select(Some(1));
+        }
+        let original = sqlite::get_update(&conn, id).unwrap();
+        press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+        assert_eq!(input.editing_update.as_ref().unwrap().id, id);
+        for value in [&original.title, &original.body, &original.next] {
+            assert_eq!(&input.input, value);
+            assert_eq!(input.character_index, value.chars().count());
+            submit(&mut app, &mut input, &conn, " edited");
+        }
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+        let saved = sqlite::get_update(&conn, id).unwrap();
+        assert_eq!(saved.title, format!("{} edited", original.title));
+        assert_eq!(saved.body, format!("{} edited", original.body));
+        assert_eq!(saved.next, format!("{} edited", original.next));
+        assert_eq!(saved.created_at, original.created_at);
+        assert!(saved.updated_at > original.updated_at);
+        assert_eq!(saved.project_id, original.project_id);
+        assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+        assert_eq!(
+            sqlite::get_update(&conn, "beta").unwrap().title,
+            "Beta progress"
+        );
+        assert_eq!(app.opened_update_id.as_deref(), Some(id));
+        assert_eq!(app.updates[app.update_selection.selected().unwrap()].id, id);
+        assert!(!app.show_update_input);
+        assert_eq!(app.show_update_table, table);
+        assert!(input.editing_update.is_none());
+    }
+}
+
+#[test]
+fn cancelling_edit_at_each_step_leaves_data_unchanged_and_clears_edit_mode() {
+    for completed in 0..=3 {
+        let (mut app, mut input, conn) = browser_with_updates();
+        press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+        press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+        for _ in 0..completed {
+            submit(&mut app, &mut input, &conn, " changed");
+        }
+        press(&mut app, &mut input, &conn, KeyCode::Esc);
+        assert!(app.show_update_table);
+        assert!(!app.show_update_input);
+        assert!(input.editing_update.is_none());
+        assert!(input.input.is_empty());
+        let saved = sqlite::get_update(&conn, "latest").unwrap();
+        assert_eq!(
+            (
+                saved.title.as_str(),
+                saved.body.as_str(),
+                saved.next.as_str()
+            ),
+            ("Latest", "Latest body", "Next")
+        );
+        press(&mut app, &mut input, &conn, KeyCode::Esc);
+        press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+        assert!(input.input.is_empty());
+        assert!(input.update.title.is_none());
+        assert!(input.editing_update.is_none());
+    }
+}
+
+#[test]
+fn edit_validates_cleared_fields_and_preserves_changes_for_save_retry() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    for (step, replacement) in [
+        (UpdateStep::Title, "Renamed"),
+        (UpdateStep::Body, "first\nsecond"),
+    ] {
+        input.input.clear();
+        input.reset_cursor();
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+        assert!(input.update_step == step);
+        assert!(app.err.is_some());
+        submit(&mut app, &mut input, &conn, replacement);
+    }
+    input.input.clear();
+    input.reset_cursor();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    conn.execute_batch("CREATE TRIGGER fail_edit BEFORE UPDATE ON updates BEGIN SELECT RAISE(FAIL, 'edit failed'); END;").unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.err.is_some());
+    assert!(input.update_step == UpdateStep::Confirm);
+    assert_eq!(input.update.body.as_deref(), Some("first\nsecond"));
+    assert_eq!(sqlite::get_update(&conn, "latest").unwrap().title, "Latest");
+    conn.execute_batch("DROP TRIGGER fail_edit").unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.err.is_none());
+    let saved = sqlite::get_update(&conn, "latest").unwrap();
+    assert_eq!(saved.title, "Renamed");
+    assert_eq!(saved.body, "first\nsecond");
+    assert_eq!(saved.next, "None");
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+}
+
+#[test]
+fn edit_requires_an_update_and_reports_missing_records() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    assert!(!app.show_update_input);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    for selected in [None, Some(10)] {
+        app.update_selection.select(selected);
+        press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+        assert!(!app.show_update_input);
+    }
+    app.update_selection.select(Some(0));
+    sqlite::delete_update(&conn, "latest").unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    assert!(!app.show_update_input);
+    assert!(app.err.is_some());
+    app.update_selection.select(Some(1));
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    sqlite::delete_update(&conn, "older").unwrap();
+    for _ in 0..4 {
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+    }
+    assert!(app.show_update_input);
+    assert!(app.err.is_some());
+    assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
 }

@@ -2,7 +2,7 @@ use std::io;
 
 use crate::types::{
     project::{Project, ProjectDraft},
-    update::{Update, UpdateDraft},
+    update::{self, Update, UpdateDraft},
 };
 use rusqlite::{Connection, Result};
 use uuid::Uuid;
@@ -130,8 +130,38 @@ pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
     update_iter.collect()
 }
 
-pub fn edit_update(conn: &Connection) -> Result<()> {
-    todo!()
+pub fn get_update(conn: &Connection, update_id: &str) -> Result<Update> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, title, body, next, created_at, updated_at
+         FROM updates WHERE id = ?1",
+    )?;
+    let update = stmt.query_row([update_id], |row| {
+        Ok(Update {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            body: row.get(3)?,
+            next: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+
+    Ok(update)
+}
+
+pub fn edit_update(conn: &Connection, update: &Update) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE updates
+              SET title = ?1, body = ?2, next = ?3, updated_at = datetime('now')
+              WHERE id = ?4",
+        (&update.title, &update.body, &update.next, &update.id),
+    )?;
+
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
 }
 
 pub fn delete_update(conn: &Connection, update_id: &str) -> Result<()> {

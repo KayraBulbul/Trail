@@ -60,6 +60,31 @@ impl App {
         Ok(())
     }
 
+    fn start_update_edit(&mut self, conn: &Connection, text_in: &mut Input, id: &str) {
+        match sqlite::get_update(conn, id) {
+            Ok(update) => {
+                text_in.edit_update(update);
+                self.show_update_input = true;
+                self.err = None;
+            }
+            Err(error) => self.err = Some(format!("Couldn't load update: {error}")),
+        }
+    }
+
+    fn displayed_update(&self) -> Option<&Update> {
+        self.updates
+            .iter()
+            .find(|update| {
+                self.opened_project_id.as_deref() == Some(update.project_id.as_str())
+                    && self.opened_update_id.as_deref() == Some(update.id.as_str())
+            })
+            .or_else(|| {
+                self.updates.iter().find(|update| {
+                    self.opened_project_id.as_deref() == Some(update.project_id.as_str())
+                })
+            })
+    }
+
     fn delete_project(&mut self, conn: &Connection, id: &str) {
         if let Err(error) = sqlite::delete_project(conn, id) {
             self.err = Some(format!("Unable to delete project: {error}"));
