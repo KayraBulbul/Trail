@@ -31,9 +31,13 @@ impl Drop for TestDirectory {
 fn setup() -> (App, Input, Connection) {
     (
         App {
+            update_rx: std::sync::mpsc::channel().1,
+            pending_release: None,
             show_project_input: true,
             show_update_input: false,
             show_update_table: false,
+            show_update_popup: false,
+            install_on_exit: false,
             show_help: false,
             help_scroll: 0,
             detail_scroll: 0,

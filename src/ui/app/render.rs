@@ -38,6 +38,13 @@ impl App {
             self.render_update_confirmation(frame, text_in);
         } else if self.show_help {
             self.render_help_window(frame);
+        } else if self.show_update_popup {
+            if self.projects.is_empty() {
+                self.render_empty_state(frame);
+            } else {
+                self.render_browser(frame);
+            }
+            self.render_update_popup(frame);
         } else if self.projects.is_empty() {
             self.render_empty_state(frame);
         } else if self.show_update_table {
@@ -448,6 +455,46 @@ impl App {
             Block::bordered()
                 .title(title)
                 .border_style(Style::new().fg(theme::ERROR)),
+        );
+
+        frame.render_widget(Clear, popup);
+        frame.render_widget(message, popup);
+    }
+
+    fn render_update_popup(&self, frame: &mut Frame) {
+        let Some(release) = &self.pending_release else {
+            return;
+        };
+
+        let area = frame.area();
+        let width = area.width.min(60);
+        let height = area.height.min(8);
+        let popup = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let message = Paragraph::new(vec![
+            Line::from(format!("Trail {} is available", release.tag_name).bold()),
+            Line::from(""),
+            Line::from(format!("You are on v{}.", env!("CARGO_PKG_VERSION"))),
+            Line::from("Installing will close Trail."),
+            Line::from(""),
+            Line::from(vec![
+                "i".bold(),
+                ": install    ".into(),
+                "Esc".bold(),
+                ": later    ".into(),
+                "n".bold(),
+                ": don't remind me".into(),
+            ]),
+        ])
+        .style(theme::BASE)
+        .block(
+            Block::bordered()
+                .title("Update available")
+                .border_style(theme::border(true)),
         );
 
         frame.render_widget(Clear, popup);

@@ -32,6 +32,7 @@ pub struct App {
     pub show_update_input: bool,
     pub show_update_table: bool,
     pub show_update_popup: bool,
+    pub install_on_exit: bool,
     pub show_help: bool,
     pub help_scroll: u16,
     pub detail_scroll: u16,

@@ -38,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         show_update_input: false,
         show_update_table: false,
         show_update_popup: false,
+        install_on_exit: false,
         show_help: false,
         help_scroll: 0,
         detail_scroll: 0,
@@ -74,5 +75,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ratatui::restore();
     app_result?;
+
+    if app.install_on_exit
+        && let Some(release) = app.pending_release.take()
+    {
+        update::updater::install_update(release)?;
+    }
     Ok(())
 }

@@ -54,6 +54,16 @@ pub fn need_update() -> Result<Option<Release>, Box<dyn std::error::Error>> {
     Ok(None)
 }
 
+pub fn ignore_version(release: &Release) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut local_data, file_path) = load_local_data()?;
+    local_data.ignored_version = Some(Version::parse(release.tag_name.trim_start_matches('v'))?);
+    save_local_data(&local_data, &file_path)
+}
+
+pub fn install_update(release: Release) -> Result<(), Box<dyn std::error::Error>> {
+    todo!()
+}
+
 fn load_local_data() -> Result<(LocalData, PathBuf), Box<dyn std::error::Error>> {
     let data_dir = dirs::data_local_dir().ok_or_else(|| {
         io::Error::new(
@@ -66,7 +76,6 @@ fn load_local_data() -> Result<(LocalData, PathBuf), Box<dyn std::error::Error>>
     std::fs::create_dir_all(&trail_dir)?;
 
     let file_path = trail_dir.join("trail.json");
-    let content = fs::read_to_string(&file_path)?;
 
     let local_data: LocalData = match fs::read_to_string(&file_path) {
         Ok(content) => serde_json::from_str(&content)?,
