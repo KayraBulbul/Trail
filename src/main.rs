@@ -1,3 +1,5 @@
+use std::env;
+
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
@@ -11,6 +13,13 @@ mod types;
 mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
+        println!("Trail Version: {}", env!("CARGO_PKG_VERSION"));
+
+        return Ok(());
+    }
+
     let conn = database::sqlite::create_database()?;
     let mut terminal = ratatui::init();
 
