@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("--help" | "-h" | "help") => {
             println!("Trail {}", env!("CARGO_PKG_VERSION"));
-            println!("Trail allows devs to organise their projects and leave themselves notes/updates so they can pick up where they left off");
+            println!("Trail allows devs to organise their projects and leave themselves notes/updates so they can pick up where they left off.");
             println!("");
             println!("USAGE:");
             println!("    trail [options] <command>");
