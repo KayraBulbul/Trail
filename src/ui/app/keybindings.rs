@@ -2,6 +2,7 @@ use super::{App, BrowserPane};
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
     ui::input::{self, InputMode},
+    update::updater,
 };
 use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use rusqlite::Connection;
@@ -36,6 +37,30 @@ impl App {
                         }
                     }
                     KeyCode::Esc => self.pending_update_delete_id = None,
+                    _ => {}
+                }
+                return Ok(());
+            }
+
+            if self.show_update_popup {
+                match key_event.code {
+                    KeyCode::Char('i') => {
+                        self.show_update_popup = false;
+                        self.install_on_exit = true;
+                        self.exit = true;
+                    }
+                    KeyCode::Char('n') => {
+                        self.show_update_popup = false;
+                        if let Some(release) = self.pending_release.take()
+                            && let Err(error) = updater::ignore_version(&release)
+                        {
+                            self.err = Some(format!("Couldn't save ignored version: {error}"));
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.show_update_popup = false;
+                        self.pending_release = None;
+                    }
                     _ => {}
                 }
                 return Ok(());

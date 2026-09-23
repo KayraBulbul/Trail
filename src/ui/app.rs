@@ -2,6 +2,7 @@ use crate::{
     database::sqlite,
     types::{project::Project, update::Update},
     ui::input::Input,
+    update::updater::Release,
 };
 
 use crossterm::event::Event;
@@ -10,7 +11,7 @@ use ratatui::{
     widgets::{ListState, TableState},
 };
 use rusqlite::{Connection, Result};
-use std::io;
+use std::{io, sync::mpsc::Receiver, time::Duration};
 
 mod keybindings;
 mod render;
@@ -25,9 +26,13 @@ pub enum BrowserPane {
 }
 
 pub struct App {
+    pub update_rx: Receiver<Release>,
+    pub pending_release: Option<Release>,
     pub show_project_input: bool,
     pub show_update_input: bool,
     pub show_update_table: bool,
+    pub show_update_popup: bool,
+    pub install_on_exit: bool,
     pub show_help: bool,
     pub help_scroll: u16,
     pub detail_scroll: u16,
@@ -54,13 +59,32 @@ impl App {
         }
 
         while !self.exit {
+            if let Ok(release) = self.update_rx.try_recv() {
+                self.pending_release = Some(release);
+            }
+            if self.pending_release.is_some() && self.is_idle() {
+                self.show_update_popup = true;
+            }
+
             terminal.draw(|frame| self.render(frame, &mut text_in))?;
-            if let Event::Key(key_event) = crossterm::event::read()? {
-                self.handle_key_event(key_event, &mut text_in, conn)?;
+
+            if crossterm::event::poll(Duration::from_millis(250))? {
+                if let Event::Key(key_event) = crossterm::event::read()? {
+                    self.handle_key_event(key_event, &mut text_in, conn)?;
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
+        !self.show_update_table
+            && !self.show_update_input
+            && !self.show_project_input
+            && !self.show_help
+            && self.pending_project_delete_id.is_none()
+            && self.pending_update_delete_id.is_none()
     }
 
     fn start_update_edit(&mut self, conn: &Connection, text_in: &mut Input, id: &str) {
