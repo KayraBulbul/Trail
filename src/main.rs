@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, primitive};
 
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
@@ -31,6 +31,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => println!("Trail is up to date (v{}).", env!("CARGO_PKG_VERSION")),
             }
             return Ok(());
+        }
+        Some("--help" | "-h" | "help") => {
+            println!("Trail {}", env!("CARGO_PKG_VERSION"));
+            println!("Trail allows devs to organise their projects and leave themselves notes/updates so they can pick up where they left off");
+            println!("");
+            println!("USAGE:");
+            println!("    trail [options] <command>");
+            println!("");
+            println!("COMMANDS:");
+            println!("    update        Install latest version.");
+            println!("    help          Print this message.");
+            println!("");
+            println!("OPTIONS:");
+            println!("    -v, --version Print version information.");
+            println!("    -h, --help    Print help information.");
         }
         _ => {}
     }
