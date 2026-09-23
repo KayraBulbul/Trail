@@ -11,6 +11,7 @@ use crate::ui::app::BrowserPane;
 mod database;
 mod types;
 mod ui;
+mod update;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
