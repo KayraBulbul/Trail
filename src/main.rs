@@ -21,13 +21,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        if let Ok(Some(release)) = update::updater::need_update() {
+            let _ = tx.send(release);
+        }
+    });
+
     let conn = database::sqlite::create_database()?;
     let mut terminal = ratatui::init();
 
     let mut app = ui::app::App {
+        update_rx: rx,
+        pending_release: None,
         show_project_input: false,
         show_update_input: false,
         show_update_table: false,
+        show_update_popup: false,
         show_help: false,
         help_scroll: 0,
         detail_scroll: 0,

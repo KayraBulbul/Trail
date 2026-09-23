@@ -43,6 +43,10 @@ pub fn need_update() -> Result<Option<Release>, Box<dyn std::error::Error>> {
         local_data.latest_version = Some(latest.clone());
         save_local_data(&local_data, &file_path)?;
 
+        if local_data.ignored_version.as_ref() == Some(&latest) {
+            return Ok(None);
+        }
+
         if latest > local {
             return Ok(Some(body));
         }
