@@ -83,6 +83,8 @@ impl App {
             && !self.show_update_input
             && !self.show_project_input
             && !self.show_help
+            && self.pending_project_delete_id.is_none()
+            && self.pending_update_delete_id.is_none()
     }
 
     fn start_update_edit(&mut self, conn: &Connection, text_in: &mut Input, id: &str) {

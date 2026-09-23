@@ -31,38 +31,60 @@ struct LocalData {
 
 static GH_URL: &str = "https://api.github.com/repos/KayraBulbul/Trail/releases/latest";
 
+// Called on launch: checks at most once a day and skips the version the user chose to ignore.
 pub fn need_update() -> Result<Option<Release>, Box<dyn std::error::Error>> {
+    let (local_data, _) = load_local_data()?;
+    if Local::now().date_naive() == local_data.last_checked {
+        return Ok(None);
+    }
+
+    let Some(release) = check_update()? else {
+        return Ok(None);
+    };
+    if local_data.ignored_version == Some(release_version(&release)?) {
+        return Ok(None);
+    }
+    Ok(Some(release))
+}
+
+// Always hits GitHub and ignores `ignored_version`, for when the user explicitly asks to update.
+pub fn check_update() -> Result<Option<Release>, Box<dyn std::error::Error>> {
     let (mut local_data, file_path) = load_local_data()?;
 
-    let today = Local::now().date_naive();
-    if today != local_data.last_checked {
-        let body = ureq::get(GH_URL)
-            .header("User-Agent", "trail")
-            .call()?
-            .body_mut()
-            .read_json::<Release>()?;
+    let release = ureq::get(GH_URL)
+        .header("User-Agent", "trail")
+        .call()?
+        .body_mut()
+        .read_json::<Release>()?;
+    let latest = release_version(&release)?;
 
-        let latest = Version::parse(body.tag_name.trim_start_matches('v'))?;
-        let local = Version::parse(env!("CARGO_PKG_VERSION"))?;
+    local_data.last_checked = Local::now().date_naive();
+    local_data.latest_version = Some(latest.clone());
+    save_local_data(&local_data, &file_path)?;
 
-        local_data.last_checked = today;
-        local_data.latest_version = Some(latest.clone());
-        save_local_data(&local_data, &file_path)?;
-
-        if local_data.ignored_version.as_ref() == Some(&latest) {
-            return Ok(None);
-        }
-
-        if latest > local {
-            return Ok(Some(body));
-        }
+    if latest > current_version()? {
+        return Ok(Some(release));
     }
     Ok(None)
 }
 
+pub fn cached_update() -> Result<Option<Version>, Box<dyn std::error::Error>> {
+    let (local_data, _) = load_local_data()?;
+    let current = current_version()?;
+    Ok(local_data.latest_version.filter(|latest| *latest > current))
+}
+
+pub fn current_version() -> Result<Version, semver::Error> {
+    Version::parse(env!("CARGO_PKG_VERSION"))
+}
+
+fn release_version(release: &Release) -> Result<Version, semver::Error> {
+    Version::parse(release.tag_name.trim_start_matches('v'))
+}
+
 pub fn ignore_version(release: &Release) -> Result<(), Box<dyn std::error::Error>> {
     let (mut local_data, file_path) = load_local_data()?;
-    local_data.ignored_version = Some(Version::parse(release.tag_name.trim_start_matches('v'))?);
+    local_data.ignored_version = Some(release_version(release)?);
     save_local_data(&local_data, &file_path)
 }
 

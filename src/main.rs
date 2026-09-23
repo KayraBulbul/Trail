@@ -15,10 +15,24 @@ mod update;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        println!("Trail Version: {}", env!("CARGO_PKG_VERSION"));
-
-        return Ok(());
+    match args.get(1).map(String::as_str) {
+        Some("--version" | "-v") => {
+            println!("Trail Version: {}", env!("CARGO_PKG_VERSION"));
+            if let Ok(Some(latest)) = update::updater::cached_update() {
+                println!("Update available: v{latest}. Run `trail update` to install it.");
+            }
+            return Ok(());
+        }
+        Some("update") => {
+            match update::updater::check_update()
+                .map_err(|error| format!("Couldn't check for updates: {error}"))?
+            {
+                Some(release) => update::updater::install_update(release)?,
+                None => println!("Trail is up to date (v{}).", env!("CARGO_PKG_VERSION")),
+            }
+            return Ok(());
+        }
+        _ => {}
     }
 
     let (tx, rx) = std::sync::mpsc::channel();
