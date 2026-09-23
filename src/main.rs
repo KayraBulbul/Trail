@@ -1,4 +1,4 @@
-use std::{env, primitive};
+use std::env;
 
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("OPTIONS:");
             println!("    -v, --version Print version information.");
             println!("    -h, --help    Print help information.");
+            return Ok(());
         }
         _ => {}
     }
