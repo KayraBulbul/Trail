@@ -15,40 +15,47 @@ mod update;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("--version" | "-v") => {
-            println!("Trail Version: {}", env!("CARGO_PKG_VERSION"));
-            if let Ok(Some(latest)) = update::updater::cached_update() {
-                println!("Update available: v{latest}. Run `trail update` to install it.");
+    if args.len() > 1 {
+        match args.get(1).map(String::as_str) {
+            Some("--version" | "-v") => {
+                println!("Trail Version: {}", env!("CARGO_PKG_VERSION"));
+                if let Ok(Some(latest)) = update::updater::cached_update() {
+                    println!("Update available: v{latest}. Run `trail update` to install it.");
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-        Some("update") => {
-            match update::updater::check_update()
-                .map_err(|error| format!("Couldn't check for updates: {error}"))?
-            {
-                Some(release) => update::updater::install_update(release)?,
-                None => println!("Trail is up to date (v{}).", env!("CARGO_PKG_VERSION")),
+            Some("update") => {
+                match update::updater::check_update()
+                    .map_err(|error| format!("Couldn't check for updates: {error}"))?
+                {
+                    Some(release) => update::updater::install_update(release)?,
+                    None => println!("Trail is up to date (v{}).", env!("CARGO_PKG_VERSION")),
+                }
+                return Ok(());
             }
-            return Ok(());
+            Some("--help" | "-h" | "help") => {
+                println!("Trail {}", env!("CARGO_PKG_VERSION"));
+                println!(
+                    "Trail allows devs to organise their projects and leave themselves notes/updates so they can pick up where they left off."
+                );
+                println!("");
+                println!("USAGE:");
+                println!("    trail [options] <command>");
+                println!("");
+                println!("COMMANDS:");
+                println!("    update        Install latest version.");
+                println!("    help          Print this message.");
+                println!("");
+                println!("OPTIONS:");
+                println!("    -v, --version Print version information.");
+                println!("    -h, --help    Print help information.");
+                return Ok(());
+            }
+            _ => {
+                print!("Invalid command, try 'trail help' to view a list of commands.");
+                return Ok(());
+            }
         }
-        Some("--help" | "-h" | "help") => {
-            println!("Trail {}", env!("CARGO_PKG_VERSION"));
-            println!("Trail allows devs to organise their projects and leave themselves notes/updates so they can pick up where they left off.");
-            println!("");
-            println!("USAGE:");
-            println!("    trail [options] <command>");
-            println!("");
-            println!("COMMANDS:");
-            println!("    update        Install latest version.");
-            println!("    help          Print this message.");
-            println!("");
-            println!("OPTIONS:");
-            println!("    -v, --version Print version information.");
-            println!("    -h, --help    Print help information.");
-            return Ok(());
-        }
-        _ => {}
     }
 
     let (tx, rx) = std::sync::mpsc::channel();
