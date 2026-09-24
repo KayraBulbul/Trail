@@ -30,6 +30,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # A tag on a commit without the version bump would ship binaries that report the old version.
+      - name: Check tag matches Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [ "v${version}" != "$RELEASE_TAG" ]; then
+            echo "::error::Tag $RELEASE_TAG doesn't match Cargo.toml version $version"
+            exit 1
+          fi
+
       - name: Test
         run: cargo test --locked
 
