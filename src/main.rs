@@ -9,6 +9,7 @@ use ratatui::widgets::{ListState, TableState};
 use crate::ui::app::BrowserPane;
 
 mod database;
+mod git;
 mod types;
 mod ui;
 mod update;
