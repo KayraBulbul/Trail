@@ -162,13 +162,45 @@ pub fn branches(dir: &Path) -> Result<Vec<Branch>, GitError> {
     Ok(vec)
 }
 
-/// The last `limit` commits on `branch` that touch `dir`, newest first.
-///
-/// Hint: `git log <branch> -n <limit> --format=%H%x09%h%x09%ct%x09%s -- .`
-/// Put the subject last: it's the only field that can contain a tab.
-/// Use `splitn(4, '\t')` so the subject stays in one piece.
 pub fn commits(dir: &Path, branch: &str, limit: usize) -> Result<Vec<Commit>, GitError> {
-    todo!()
+    let commits = git(
+        dir,
+        &[
+            "log",
+            branch,
+            "-n",
+            limit.to_string().as_str(),
+            "--format=%H%x09%h%x09%ct%x09%s",
+            "--",
+            ".",
+        ],
+    )?;
+
+    let mut vec: Vec<Commit> = Vec::new();
+
+    for commit in commits.lines() {
+        let log: Vec<&str> = commit.splitn(4, '\t').collect();
+        let [sha, short_sha, unix_time, subject] = log[..] else {
+            continue;
+        };
+
+        let Some(time) = unix_time
+            .parse::<i64>()
+            .ok()
+            .and_then(|secs| DateTime::from_timestamp(secs, 0))
+        else {
+            continue;
+        };
+
+        vec.push(Commit {
+            sha: sha.to_string(),
+            short_sha: short_sha.to_string(),
+            subject: subject.to_string(),
+            time,
+        });
+    }
+
+    Ok(vec)
 }
 
 /// The diff a single commit introduced.
@@ -178,7 +210,16 @@ pub fn commits(dir: &Path, branch: &str, limit: usize) -> Result<Vec<Commit>, Gi
 /// - `patch`: `git show --format= <sha> -- .`, split into lines, capped with `cap_lines`.
 ///   (`--format=` with nothing after it hides the commit header.)
 pub fn commit_diff(dir: &Path, sha: &str) -> Result<Diff, GitError> {
-    todo!()
+    let stat = git(dir, &["show", "--stat", "--format=", sha, "--", "."])?;
+    let output = git(dir, &["show", "--format=", sha, "--", "."])?;
+
+    let (patch, truncated) = cap_lines(&output);
+    Ok(Diff {
+        stat,
+        patch,
+        truncated,
+        ..Default::default()
+    })
 }
 
 /// Staged + unstaged changes, plus the names of untracked files.
@@ -193,7 +234,13 @@ pub fn uncommitted_diff(dir: &Path) -> Result<Diff, GitError> {
 
 /// Splits `text` into at most `DIFF_LINE_LIMIT` lines. The bool says whether it cut anything off.
 fn cap_lines(text: &str) -> (Vec<String>, bool) {
-    todo!()
+    (
+        text.lines()
+            .take(DIFF_LINE_LIMIT)
+            .map(|line| line.to_string())
+            .collect(),
+        text.lines().count() > DIFF_LINE_LIMIT,
+    )
 }
 
 #[cfg(test)]

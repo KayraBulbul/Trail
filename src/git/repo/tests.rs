@@ -133,3 +133,114 @@ fn summary_files_changed_scoped_to_subdirectory() {
     assert_eq!(sum_outer.files_changed, 3);
     assert_eq!(sum_inner.files_changed, 1);
 }
+
+#[test]
+fn commits_are_newest_first_and_keep_tabs_in_subject() {
+    let repo = TempRepo::new();
+    repo.commit_file("a.txt", "a", "first");
+    repo.commit_file("b.txt", "b", "second\twith tab");
+    let head = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+
+    let commits = commits(&repo.path, "main", COMMIT_LIMIT).unwrap();
+
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].sha, head);
+    assert!(head.starts_with(&commits[0].short_sha));
+    assert_eq!(commits[0].subject, "second\twith tab");
+    assert_eq!(commits[1].subject, "first");
+}
+
+#[test]
+fn commits_respects_limit() {
+    let repo = TempRepo::new();
+    for name in ["a", "b", "c"] {
+        repo.commit_file(name, name, name);
+    }
+
+    assert_eq!(commits(&repo.path, "main", 2).unwrap().len(), 2);
+}
+
+#[test]
+fn commits_reads_other_branches_without_checking_out() {
+    let repo = TempRepo::new();
+    repo.commit_file("a.txt", "a", "on main");
+    repo.run(&["checkout", "-q", "-b", "feature"]);
+    repo.commit_file("b.txt", "b", "on feature");
+    repo.run(&["checkout", "-q", "main"]);
+
+    let commits = commits(&repo.path, "feature", COMMIT_LIMIT).unwrap();
+
+    assert_eq!(commits[0].subject, "on feature");
+    assert_eq!(
+        detect(&repo.path).unwrap().head,
+        Head::Branch("main".to_string())
+    );
+}
+
+#[test]
+fn commits_scoped_to_subdirectory() {
+    let repo = TempRepo::new();
+    fs::create_dir_all(repo.path.join("sub")).unwrap();
+    repo.commit_file("root.txt", "root", "root change");
+    repo.commit_file("sub/inner.txt", "inner", "sub change");
+
+    let commits = commits(&repo.path.join("sub"), "main", COMMIT_LIMIT).unwrap();
+
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].subject, "sub change");
+}
+
+#[test]
+fn commit_diff_has_stat_and_added_lines() {
+    let repo = TempRepo::new();
+    repo.commit_file("notes.txt", "hello trail\n", "add notes");
+    let sha = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+
+    let diff = commit_diff(&repo.path, &sha).unwrap();
+
+    assert!(diff.stat.contains("notes.txt"));
+    assert!(diff.patch.iter().any(|line| line == "+hello trail"));
+    assert!(!diff.patch.iter().any(|line| line.starts_with("commit ")));
+    assert!(!diff.truncated);
+}
+
+#[test]
+fn commit_diff_scoped_to_subdirectory() {
+    let repo = TempRepo::new();
+    fs::create_dir_all(repo.path.join("sub")).unwrap();
+    fs::write(repo.path.join("root.txt"), "root\n").unwrap();
+    fs::write(repo.path.join("sub/inner.txt"), "inner\n").unwrap();
+    repo.run(&["add", "."]);
+    repo.run(&["commit", "-q", "-m", "both"]);
+    let sha = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+
+    let diff = commit_diff(&repo.path.join("sub"), &sha).unwrap();
+
+    assert!(diff.stat.contains("inner.txt"));
+    assert!(!diff.stat.contains("root.txt"));
+    assert!(!diff.patch.iter().any(|line| line.contains("root.txt")));
+}
+
+#[test]
+fn cap_lines_keeps_short_text_whole() {
+    assert_eq!(
+        cap_lines("a\nb\n"),
+        (vec!["a".to_string(), "b".to_string()], false)
+    );
+}
+
+#[test]
+fn cap_lines_at_limit_is_not_truncated() {
+    let (lines, truncated) = cap_lines(&"x\n".repeat(DIFF_LINE_LIMIT));
+
+    assert_eq!(lines.len(), DIFF_LINE_LIMIT);
+    assert!(!truncated);
+}
+
+#[test]
+fn cap_lines_over_limit_is_truncated() {
+    let (lines, truncated) = cap_lines(&"x\n".repeat(DIFF_LINE_LIMIT + 1));
+
+    assert_eq!(lines.len(), DIFF_LINE_LIMIT);
+    assert!(truncated);
+}
