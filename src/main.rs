@@ -6,9 +6,10 @@ use crossterm::{
 };
 use ratatui::widgets::{ListState, TableState};
 
-use crate::ui::app::BrowserPane;
+use crate::ui::app::{BrowserPane, GitState};
 
 mod database;
+mod git;
 mod types;
 mod ui;
 mod update;
@@ -75,6 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         show_update_input: false,
         show_update_table: false,
         show_update_popup: false,
+        show_git_view: false,
         install_on_exit: false,
         show_help: false,
         help_scroll: 0,
@@ -89,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pending_project_delete_id: None,
         pending_update_delete_id: None,
         focused_pane: BrowserPane::Projects,
+        git: GitState::default(),
         err: None,
         exit: false,
     };

@@ -1,9 +1,10 @@
-use super::{App, BrowserPane};
+use super::{App, BrowserPane, GitEntry, GitPane};
 use crate::{
+    git::repo::Head,
     types::{project::ProjectStep, update::UpdateStep},
     ui::{input, theme},
 };
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -47,6 +48,8 @@ impl App {
             self.render_update_popup(frame);
         } else if self.projects.is_empty() {
             self.render_empty_state(frame);
+        } else if self.show_git_view {
+            self.render_git_view(frame);
         } else if self.show_update_table {
             let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
             let rects = frame.area().layout_vec(&layout);
@@ -311,7 +314,14 @@ impl App {
             .projects
             .iter()
             .map(|project| {
-                let item = ListItem::new(project.name.as_str());
+                let item = if self.git.repos.contains(&project.id) {
+                    ListItem::new(Line::from(vec![
+                        project.name.as_str().into(),
+                        Span::styled(" git", theme::SECONDARY),
+                    ]))
+                } else {
+                    ListItem::new(project.name.as_str())
+                };
                 if self.opened_project_id.as_deref() == Some(project.id.as_str()) {
                     item.style(theme::ROW.fg(theme::ACCENT))
                 } else {
@@ -328,6 +338,7 @@ impl App {
         );
         frame.render_stateful_widget(list, project_list_area, &mut self.project_selection);
 
+        let git_summary = self.git_summary_line();
         if let Some(update) = self.displayed_update() {
             let created_at_local_time = update.created_at.with_timezone(&Local);
             let updated_at_local_time = update.updated_at.with_timezone(&Local);
@@ -347,11 +358,15 @@ impl App {
                 Line::from(updated_at_msg).style(theme::SECONDARY),
             ]);
 
-            let block = Block::bordered()
-                .title(update.title.as_str())
-                .border_style(theme::border(
-                    self.focused_pane == BrowserPane::LatestUpdate,
-                ));
+            let mut block =
+                Block::bordered()
+                    .title(update.title.as_str())
+                    .border_style(theme::border(
+                        self.focused_pane == BrowserPane::LatestUpdate,
+                    ));
+            if let Some(git_summary) = git_summary {
+                block = block.title_top(git_summary);
+            }
             let inner = block.inner(latest_update_area);
             frame.render_widget(block, latest_update_area);
             render_scrolled(frame, text, inner, &mut self.detail_scroll);
@@ -379,13 +394,19 @@ impl App {
                 );
 
                 let text = Text::from(Line::from(msg)).patch_style(style);
-                let project_message =
-                    Paragraph::new(text)
-                        .wrap(Wrap { trim: false })
-                        .style(theme::SECONDARY)
-                        .block(Block::bordered().title("Latest Update").border_style(
-                            theme::border(self.focused_pane == BrowserPane::LatestUpdate),
+                let mut block =
+                    Block::bordered()
+                        .title("Latest Update")
+                        .border_style(theme::border(
+                            self.focused_pane == BrowserPane::LatestUpdate,
                         ));
+                if let Some(git_summary) = git_summary {
+                    block = block.title_top(git_summary);
+                }
+                let project_message = Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .style(theme::SECONDARY)
+                    .block(block);
                 frame.render_widget(project_message, latest_update_area);
             }
         }
@@ -394,9 +415,184 @@ impl App {
             BrowserPane::Projects => {
                 "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
             }
+            BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
+                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+            }
             BrowserPane::LatestUpdate => {
                 "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
             }
+        };
+        let help_message = Paragraph::new(help).style(theme::SECONDARY);
+        frame.render_widget(help_message, help_area);
+    }
+
+    fn git_summary_line(&self) -> Option<Line<'static>> {
+        let summary = self.git.summary.as_ref()?;
+
+        let mut parts = vec![match &summary.head {
+            Head::Branch(name) => name.clone(),
+            Head::Detached(sha) => format!("detached @ {sha}"),
+        }];
+        match summary.files_changed {
+            0 => {}
+            1 => parts.push("1 file changed".to_string()),
+            count => parts.push(format!("{count} files changed")),
+        }
+        if let Some(last_commit) = summary.last_commit {
+            parts.push(format!("last commit {}", relative_time(last_commit)));
+        }
+
+        Some(
+            Line::from(format!(" {} ", parts.join(" · ")))
+                .style(theme::SECONDARY)
+                .right_aligned(),
+        )
+    }
+
+    fn render_git_view(&mut self, frame: &mut Frame) {
+        let error_height = if self.err.is_some() { 1 } else { 0 };
+
+        let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(error_height),
+            Constraint::Length(1),
+        ]));
+
+        if let Some(error) = &self.err {
+            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
+
+            frame.render_widget(message, error_area);
+        }
+
+        let [list_area, diff_area] = content_area.layout(&Layout::horizontal([
+            Constraint::Percentage(20),
+            Constraint::Percentage(80),
+        ]));
+
+        let list_focused = self.git.focused_pane == GitPane::List;
+        if let Some(branch) = &self.git.opened_branch {
+            let block = Block::bordered()
+                .title(format!("Commits · {branch}"))
+                .border_style(theme::border(list_focused));
+            if self.git.entries.is_empty() {
+                let message = Paragraph::new("No commits yet")
+                    .style(theme::SECONDARY)
+                    .block(block);
+                frame.render_widget(message, list_area);
+            } else {
+                let entries: Vec<ListItem<'_>> = self
+                    .git
+                    .entries
+                    .iter()
+                    .map(|entry| match entry {
+                        GitEntry::Uncommitted => ListItem::new("Uncommitted changes")
+                            .style(Style::new().fg(theme::ACCENT)),
+                        GitEntry::Commit(commit) => ListItem::new(Line::from(vec![
+                            Span::styled(commit.short_sha.as_str(), theme::SECONDARY),
+                            " ".into(),
+                            commit.subject.as_str().into(),
+                            Span::styled(
+                                format!(" · {}", relative_time(commit.time)),
+                                theme::SECONDARY,
+                            ),
+                        ])),
+                    })
+                    .collect();
+                let list = List::new(entries).highlight_symbol("> ").block(block);
+                frame.render_stateful_widget(list, list_area, &mut self.git.entry_selection);
+            }
+        } else {
+            let branches: Vec<ListItem<'_>> = self
+                .git
+                .branches
+                .iter()
+                .map(|branch| {
+                    let age = Span::styled(
+                        format!(" · {}", relative_time(branch.last_commit)),
+                        theme::SECONDARY,
+                    );
+                    if branch.is_head {
+                        ListItem::new(Line::from(vec![
+                            Span::styled(
+                                format!("* {}", branch.name),
+                                Style::new().fg(theme::ACCENT),
+                            ),
+                            age,
+                        ]))
+                    } else {
+                        ListItem::new(Line::from(vec![format!("  {}", branch.name).into(), age]))
+                    }
+                })
+                .collect();
+            let list = List::new(branches).highlight_symbol("> ").block(
+                Block::bordered()
+                    .title("Branches")
+                    .border_style(theme::border(list_focused)),
+            );
+            frame.render_stateful_widget(list, list_area, &mut self.git.branch_selection);
+        }
+
+        let diff_focused = self.git.focused_pane == GitPane::Diff;
+        if let Some(diff) = &self.git.diff {
+            let mut lines: Vec<Line<'_>> = diff
+                .stat
+                .lines()
+                .map(|line| Line::from(line).style(theme::SECONDARY))
+                .collect();
+            if !diff.untracked.is_empty() {
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
+                lines.push(Line::from("Untracked:").style(theme::HEADING));
+                lines.extend(
+                    diff.untracked
+                        .iter()
+                        .map(|file| Line::from(format!("  {file}"))),
+                );
+            }
+            if !diff.patch.is_empty() {
+                lines.push(Line::from(""));
+                lines.extend(diff.patch.iter().map(|line| diff_line(line)));
+            }
+            if diff.truncated {
+                lines.push(Line::from("… truncated").style(theme::SECONDARY));
+            }
+            if lines.is_empty() {
+                lines.push(Line::from("No changes").style(theme::SECONDARY));
+            }
+
+            let block = Block::bordered()
+                .title(self.git.diff_title.as_str())
+                .border_style(theme::border(diff_focused));
+            let inner = block.inner(diff_area);
+            frame.render_widget(block, diff_area);
+            render_scrolled(frame, Text::from(lines), inner, &mut self.git.diff_scroll);
+        } else {
+            let (msg, style) = (
+                vec![
+                    "Choose a branch, then a commit, and press ".into(),
+                    "Enter".bold(),
+                    " to view its diff".into(),
+                ],
+                Style::default(),
+            );
+            let text = Text::from(Line::from(msg)).patch_style(style);
+            let diff_message = Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .style(theme::SECONDARY)
+                .block(
+                    Block::bordered()
+                        .title("Diff")
+                        .border_style(theme::border(diff_focused)),
+                );
+            frame.render_widget(diff_message, diff_area);
+        }
+
+        let help = match self.git.focused_pane {
+            GitPane::List => {
+                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Esc) back | (q) quit"
+            }
+            GitPane::Diff => "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Esc) back | (q) quit",
         };
         let help_message = Paragraph::new(help).style(theme::SECONDARY);
         frame.render_widget(help_message, help_area);
@@ -621,6 +817,7 @@ impl App {
             Line::from("e: edit displayed update (Latest Update focused)"),
             Line::from("j/k or Up/Down: scroll update details"),
             Line::from("u: update table (requires an open project)"),
+            Line::from("g: git view (requires an open git project)"),
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
@@ -629,6 +826,16 @@ impl App {
             Line::from("d: delete selected update"),
             Line::from("e: edit selected update"),
             Line::from("Esc: return"),
+            Line::from("q: quit"),
+            Line::from(""),
+            Line::from("Git view").style(theme::HEADING),
+            Line::from("j / Down, k / Up: select a branch or commit (list focused)"),
+            Line::from("Enter: open branch commits / show commit diff"),
+            Line::from("j/k or Up/Down: scroll diff (diff focused)"),
+            Line::from("Ctrl+h: focus list"),
+            Line::from("Ctrl+l: focus diff"),
+            Line::from("r: refresh"),
+            Line::from("Esc: back (diff, commits, branches, close)"),
             Line::from("q: quit"),
             Line::from(""),
             Line::from("Project and update forms").style(theme::HEADING),
@@ -646,7 +853,7 @@ impl App {
             Line::from(""),
             Line::from("Help").style(theme::HEADING),
             Line::from("j/k or Up/Down: scroll"),
-            Line::from("PgUp/PgDn, Home/End: scroll details, confirmation or help"),
+            Line::from("PgUp/PgDn, Home/End: scroll details, confirmation, diff or help"),
             Line::from("Esc / ?: return"),
             Line::from("q: quit"),
         ]);
@@ -656,6 +863,35 @@ impl App {
         let inner = block.inner(frame.area());
         frame.render_widget(block, frame.area());
         render_scrolled(frame, help, inner, &mut self.help_scroll);
+    }
+}
+
+fn diff_line(line: &str) -> Line<'static> {
+    let style =
+        if line.starts_with("diff --git") || line.starts_with("+++") || line.starts_with("---") {
+            Style::new().bold()
+        } else if line.starts_with("@@") {
+            theme::SECONDARY
+        } else if line.starts_with('+') {
+            Style::new().fg(theme::ADDED)
+        } else if line.starts_with('-') {
+            Style::new().fg(theme::REMOVED)
+        } else {
+            Style::default()
+        };
+    // Tabs have no cell width, so expand them before wrapping.
+    Line::from(line.replace('\t', "    ")).style(style)
+}
+
+fn relative_time(time: DateTime<Utc>) -> String {
+    let seconds = (Utc::now() - time).num_seconds().max(0);
+    match seconds {
+        0..60 => "just now".to_string(),
+        60..3600 => format!("{}m ago", seconds / 60),
+        3600..86400 => format!("{}h ago", seconds / 3600),
+        86400..2_592_000 => format!("{}d ago", seconds / 86400),
+        2_592_000..31_536_000 => format!("{}mo ago", seconds / 2_592_000),
+        _ => format!("{}y ago", seconds / 31_536_000),
     }
 }
 
