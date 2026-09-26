@@ -37,6 +37,7 @@ fn setup() -> (App, Input, Connection) {
             show_update_input: false,
             show_update_table: false,
             show_update_popup: false,
+            show_git_view: false,
             install_on_exit: false,
             show_help: false,
             help_scroll: 0,
@@ -51,6 +52,7 @@ fn setup() -> (App, Input, Connection) {
             pending_project_delete_id: None,
             pending_update_delete_id: None,
             focused_pane: BrowserPane::Projects,
+            git: GitState::default(),
             err: None,
             exit: false,
         },
@@ -1194,4 +1196,148 @@ fn confirmation_scrolling_preserves_the_draft_and_allows_saving() {
     assert_eq!(saved.body, body);
     assert_eq!(saved.next, "NEXT_STEP");
     assert_eq!(app.detail_scroll, 0);
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=Trail Test",
+            "-c",
+            "user.email=test@trail.invalid",
+        ])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+/// Opens a project whose directory is a fresh git repo on `main`.
+fn browser_with_git_project(temp_dir: &TestDirectory) -> (App, Input, Connection, PathBuf) {
+    let (mut app, mut input, conn) = browser();
+    let dir = PathBuf::from(temp_dir.create_project_directory("repo"));
+    git(&dir, &["init", "-q", "-b", "main"]);
+    conn.execute(
+        "INSERT INTO projects (id, name, directory, created_at, updated_at)
+         VALUES ('git', 'Repo', ?1, '2026-09-19 04:00:00', '2026-09-19 04:00:00')",
+        [dir.to_str().unwrap()],
+    )
+    .unwrap();
+    app.reload_projects(&conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    (app, input, conn, dir)
+}
+
+fn commit(dir: &std::path::Path, name: &str, contents: &str, message: &str) {
+    fs::write(dir.join(name), contents).unwrap();
+    git(dir, &["add", name]);
+    git(dir, &["commit", "-q", "-m", message]);
+}
+
+#[test]
+fn git_view_needs_an_opened_git_project() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    assert!(app.git.repos.is_empty());
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+
+    assert!(!app.show_git_view);
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(!text.contains("(g) git"));
+    assert!(!text.contains("Alpha git"));
+}
+
+#[test]
+fn opened_git_project_shows_marker_summary_and_git_hint() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    fs::write(dir.join("new.txt"), "new").unwrap();
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    let text = rendered_text(&mut app, &mut input, 160, 24);
+
+    assert!(text.contains("Repo git"));
+    assert!(text.contains("main · 1 file changed · last commit just now"));
+    assert!(text.contains("(g) git"));
+}
+
+#[test]
+fn git_view_walks_branches_commits_and_diff_then_steps_back() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    commit(&dir, "b.txt", "second line\n", "second");
+    git(&dir, &["branch", "feature"]);
+    fs::write(dir.join("a.txt"), "changed\n").unwrap();
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(app.show_git_view);
+    let selected = app.git.branch_selection.selected().unwrap();
+    assert_eq!(app.git.branches[selected].name, "main");
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("Branches"));
+    assert!(text.contains("* main"));
+    assert!(text.contains("Choose a branch, then a commit"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
+    assert!(matches!(app.git.entries[0], GitEntry::Uncommitted));
+    assert_eq!(app.git.entries.len(), 3);
+
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert!(app.git.focused_pane == GitPane::Diff);
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("second"));
+    assert!(text.contains("+second line"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(app.git.focused_pane == GitPane::List);
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(app.git.opened_branch.is_none());
+    assert_eq!(app.git.branch_selection.selected(), Some(selected));
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(!app.show_git_view);
+    assert!(!app.exit);
+}
+
+#[test]
+fn git_view_without_commits_shows_uncommitted_changes() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    fs::write(dir.join("new.txt"), "new").unwrap();
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(app.err.is_none());
+    assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("Untracked:"));
+    assert!(text.contains("new.txt"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert!(!app.show_git_view);
+}
+
+#[test]
+fn git_view_refresh_picks_up_new_commits() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(app.git.entries.len(), 1);
+
+    commit(&dir, "b.txt", "b\n", "second");
+    press(&mut app, &mut input, &conn, KeyCode::Char('r'));
+
+    assert_eq!(app.git.entries.len(), 2);
+    assert!(app.err.is_none());
 }

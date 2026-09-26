@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use std::{fmt, io, path::Path, process::Command};
 

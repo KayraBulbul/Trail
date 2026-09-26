@@ -1,4 +1,4 @@
-use super::{App, BrowserPane};
+use super::{App, BrowserPane, DiffSource, GitEntry, GitPane};
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
     ui::input::{self, InputMode},
@@ -70,6 +70,12 @@ impl App {
                 Some(&mut self.help_scroll)
             } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
                 Some(&mut self.confirmation_scroll)
+            } else if self.show_git_view {
+                if self.git.focused_pane == GitPane::Diff {
+                    Some(&mut self.git.diff_scroll)
+                } else {
+                    None
+                }
             } else if !self.show_update_input
                 && !self.show_project_input
                 && !self.show_update_table
@@ -153,6 +159,7 @@ impl App {
 
                                 self.opened_project_id = Some(project_id);
                                 self.clear_updates();
+                                self.reload_git_summary();
                                 self.focused_pane = BrowserPane::LatestUpdate;
                             }
                             Err(error) => {
@@ -333,6 +340,96 @@ impl App {
                     }
                     _ => {}
                 }
+            } else if self.show_git_view {
+                match key_event.code {
+                    // Step back: diff -> commits -> branches -> close
+                    KeyCode::Esc => {
+                        if self.git.focused_pane == GitPane::Diff {
+                            self.git.focused_pane = GitPane::List;
+                        } else if self.git.opened_branch.is_some() && !self.git.branches.is_empty()
+                        {
+                            self.git.opened_branch = None;
+                            self.git.entries.clear();
+                        } else {
+                            self.show_git_view = false;
+                        }
+                    }
+                    KeyCode::Char('q') => self.exit = true,
+                    KeyCode::Char('r') => self.reload_git(),
+                    // Focus list
+                    KeyCode::Char('h') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.git.focused_pane = GitPane::List;
+                    }
+                    // Focus diff
+                    KeyCode::Char('l')
+                        if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                            && self.git.diff.is_some() =>
+                    {
+                        self.git.focused_pane = GitPane::Diff;
+                    }
+                    // Down on branches / commits
+                    KeyCode::Char('j') | KeyCode::Down
+                        if self.git.focused_pane == GitPane::List =>
+                    {
+                        let (selection, len) = self.git_list_selection();
+                        if len > 0 {
+                            let index = match selection.selected() {
+                                Some(index) => index.saturating_add(1).min(len - 1),
+                                None => 0,
+                            };
+                            selection.select(Some(index));
+                        }
+                    }
+                    // Up on branches / commits
+                    KeyCode::Char('k') | KeyCode::Up if self.git.focused_pane == GitPane::List => {
+                        let (selection, len) = self.git_list_selection();
+                        if len > 0 {
+                            let index = match selection.selected() {
+                                Some(index) => index.saturating_sub(1),
+                                None => 0,
+                            };
+                            selection.select(Some(index));
+                        }
+                    }
+                    // Open branch commits
+                    KeyCode::Enter
+                        if self.git.focused_pane == GitPane::List
+                            && self.git.opened_branch.is_none() =>
+                    {
+                        if let Some(name) = self
+                            .git
+                            .branch_selection
+                            .selected()
+                            .and_then(|index| self.git.branches.get(index))
+                            .map(|branch| branch.name.clone())
+                        {
+                            self.err = None;
+                            self.open_git_branch(name);
+                        }
+                    }
+                    // Open commit diff
+                    KeyCode::Enter if self.git.focused_pane == GitPane::List => {
+                        let opened = self
+                            .git
+                            .entry_selection
+                            .selected()
+                            .and_then(|index| self.git.entries.get(index))
+                            .map(|entry| match entry {
+                                GitEntry::Uncommitted => {
+                                    (DiffSource::Uncommitted, "Uncommitted changes".to_string())
+                                }
+                                GitEntry::Commit(commit) => (
+                                    DiffSource::Commit(commit.sha.clone()),
+                                    format!("{} {}", commit.short_sha, commit.subject),
+                                ),
+                            });
+                        if let Some((source, title)) = opened {
+                            self.err = None;
+                            self.open_git_diff(source, title);
+                        }
+                    }
+                    _ => {}
+                }
             } else if self.show_help {
                 match key_event.code {
                     KeyCode::Esc | KeyCode::Char('?') => self.show_help = false,
@@ -377,6 +474,10 @@ impl App {
                     KeyCode::Char('u') if !self.opened_project_id.is_none() => {
                         self.show_update_table = true;
                     }
+                    // Open git view
+                    KeyCode::Char('g') if self.opened_git_directory().is_some() => {
+                        self.open_git_view();
+                    }
                     // Open project
                     KeyCode::Enter if self.focused_pane == BrowserPane::Projects => {
                         if let Some(project) = self
@@ -391,6 +492,7 @@ impl App {
                                     "Error retrieving updates for this project: {error}"
                                 ))
                             }
+                            self.reload_git_summary();
                             self.focused_pane = BrowserPane::LatestUpdate;
                         }
                     }

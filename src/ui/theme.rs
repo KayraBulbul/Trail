@@ -6,6 +6,8 @@ pub const MUTED: Color = Color::Rgb(153, 166, 188);
 pub const BORDER: Color = Color::Rgb(89, 104, 128);
 pub const ACCENT: Color = Color::Rgb(125, 218, 202);
 pub const ERROR: Color = Color::Rgb(255, 145, 155);
+pub const ADDED: Color = Color::Rgb(158, 222, 140);
+pub const REMOVED: Color = Color::Rgb(255, 145, 155);
 
 pub const BASE: Style = Style::new().fg(TEXT).bg(BACKGROUND);
 pub const SECONDARY: Style = Style::new().fg(MUTED);
