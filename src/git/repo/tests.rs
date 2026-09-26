@@ -32,6 +32,26 @@ impl TempRepo {
         self.run(&["add", name]);
         self.run(&["commit", "-q", "-m", message]);
     }
+
+    /// Like `commit_file`, but with a fixed commit time so ordering by date is deterministic.
+    fn commit_file_at(&self, name: &str, contents: &str, message: &str, unix_time: i64) {
+        fs::write(self.path.join(name), contents).unwrap();
+        self.run(&["add", name]);
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.path)
+            .args([
+                "-c",
+                "user.name=Trail Test",
+                "-c",
+                "user.email=test@trail.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false", "commit", "-q", "-m", message])
+            .env("GIT_COMMITTER_DATE", format!("@{unix_time} +0000"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
 }
 
 impl Drop for TempRepo {
@@ -243,4 +263,84 @@ fn cap_lines_over_limit_is_truncated() {
 
     assert_eq!(lines.len(), DIFF_LINE_LIMIT);
     assert!(truncated);
+}
+
+#[test]
+fn branches_are_newest_first_and_mark_head() {
+    let repo = TempRepo::new();
+    repo.commit_file_at("a.txt", "a", "on main", 1_000_000_000);
+    repo.run(&["checkout", "-q", "-b", "feature"]);
+    repo.commit_file_at("b.txt", "b", "on feature", 1_500_000_000);
+    repo.run(&["checkout", "-q", "main"]);
+
+    let branches = branches(&repo.path).unwrap();
+
+    let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+    assert_eq!(names, ["feature", "main"]);
+    assert!(!branches[0].is_head);
+    assert!(branches[1].is_head);
+    assert_eq!(branches[0].last_commit.timestamp(), 1_500_000_000);
+}
+
+#[test]
+fn branches_empty_without_commits() {
+    let repo = TempRepo::new();
+
+    assert!(branches(&repo.path).unwrap().is_empty());
+}
+
+#[test]
+fn uncommitted_diff_without_commits_lists_untracked() {
+    let repo = TempRepo::new();
+    fs::write(repo.path.join("new.txt"), "new").unwrap();
+
+    let diff = uncommitted_diff(&repo.path).unwrap();
+
+    assert_eq!(diff.untracked, ["new.txt"]);
+    assert!(diff.stat.is_empty());
+    assert!(diff.patch.is_empty());
+}
+
+#[test]
+fn uncommitted_diff_separates_tracked_changes_from_untracked() {
+    let repo = TempRepo::new();
+    repo.commit_file("notes.txt", "old\n", "init");
+    fs::write(repo.path.join("notes.txt"), "new\n").unwrap();
+    fs::write(repo.path.join("staged.txt"), "staged\n").unwrap();
+    repo.run(&["add", "staged.txt"]);
+    fs::write(repo.path.join("untracked.txt"), "untracked\n").unwrap();
+
+    let diff = uncommitted_diff(&repo.path).unwrap();
+
+    assert!(diff.patch.iter().any(|line| line == "-old"));
+    assert!(diff.patch.iter().any(|line| line == "+new"));
+    assert!(diff.stat.contains("staged.txt"));
+    assert_eq!(diff.untracked, ["untracked.txt"]);
+}
+
+#[test]
+fn uncommitted_diff_clean_repo_is_empty() {
+    let repo = TempRepo::new();
+    repo.commit_file("notes.txt", "hi", "init");
+
+    let diff = uncommitted_diff(&repo.path).unwrap();
+
+    assert!(diff.stat.is_empty());
+    assert!(diff.patch.is_empty());
+    assert!(diff.untracked.is_empty());
+}
+
+#[test]
+fn uncommitted_diff_scoped_to_subdirectory() {
+    let repo = TempRepo::new();
+    fs::create_dir_all(repo.path.join("sub")).unwrap();
+    repo.commit_file("root.txt", "root\n", "init");
+    fs::write(repo.path.join("root.txt"), "root changed\n").unwrap();
+    fs::write(repo.path.join("root_new.txt"), "x").unwrap();
+    fs::write(repo.path.join("sub/inner.txt"), "x").unwrap();
+
+    let diff = uncommitted_diff(&repo.path.join("sub")).unwrap();
+
+    assert!(diff.patch.is_empty());
+    assert_eq!(diff.untracked, ["inner.txt"]);
 }

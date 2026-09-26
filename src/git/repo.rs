@@ -203,12 +203,6 @@ pub fn commits(dir: &Path, branch: &str, limit: usize) -> Result<Vec<Commit>, Gi
     Ok(vec)
 }
 
-/// The diff a single commit introduced.
-///
-/// Hints:
-/// - `stat`: `git show --stat --format= <sha> -- .`
-/// - `patch`: `git show --format= <sha> -- .`, split into lines, capped with `cap_lines`.
-///   (`--format=` with nothing after it hides the commit header.)
 pub fn commit_diff(dir: &Path, sha: &str) -> Result<Diff, GitError> {
     let stat = git(dir, &["show", "--stat", "--format=", sha, "--", "."])?;
     let output = git(dir, &["show", "--format=", sha, "--", "."])?;
@@ -222,17 +216,34 @@ pub fn commit_diff(dir: &Path, sha: &str) -> Result<Diff, GitError> {
     })
 }
 
-/// Staged + unstaged changes, plus the names of untracked files.
-///
-/// Hints:
-/// - `stat` / `patch`: like `commit_diff`, but `git diff --stat HEAD -- .` and `git diff HEAD -- .`
-///   (this fails when there are no commits yet; decide what to return then).
-/// - `untracked`: `git ls-files --others --exclude-standard -- .`
 pub fn uncommitted_diff(dir: &Path) -> Result<Diff, GitError> {
-    todo!()
+    let has_commits = git(dir, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok();
+    let (stat, patch, truncated) = if has_commits {
+        let stat = git(dir, &["diff", "--stat", "HEAD", "--", "."])?;
+        let output = git(dir, &["diff", "HEAD", "--", "."])?;
+        let (patch, truncated) = cap_lines(&output);
+        (stat, patch, truncated)
+    } else {
+        (String::new(), Vec::new(), false)
+    };
+
+    let untracked_files = git(
+        dir,
+        &["ls-files", "--others", "--exclude-standard", "--", "."],
+    )?;
+    let untracked = untracked_files
+        .lines()
+        .map(|line| line.to_string())
+        .collect();
+
+    Ok(Diff {
+        stat,
+        patch,
+        truncated,
+        untracked,
+    })
 }
 
-/// Splits `text` into at most `DIFF_LINE_LIMIT` lines. The bool says whether it cut anything off.
 fn cap_lines(text: &str) -> (Vec<String>, bool) {
     (
         text.lines()
