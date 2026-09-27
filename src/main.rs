@@ -11,6 +11,7 @@ use ratatui::widgets::{ListState, TableState};
 use crate::ui::app::{BrowserPane, GitState};
 
 mod cli;
+mod core;
 mod database;
 mod git;
 mod types;
