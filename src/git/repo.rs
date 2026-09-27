@@ -259,5 +259,14 @@ fn cap_lines(text: &str) -> (Vec<String>, bool) {
     )
 }
 
+pub fn commits_since(dir: &Path, sha: &str) -> Option<usize> {
+    let range = format!("{sha}..HEAD");
+    git(dir, &["rev-list", "--count", &range, "--", "."])
+        .ok()?
+        .trim()
+        .parse::<usize>()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests;
