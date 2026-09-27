@@ -13,6 +13,8 @@ impl Input {
             body: Some(update.body.clone()),
             next: Some(update.next.clone()),
             project_id: Some(update.project_id.clone()),
+            branch: update.branch.clone(),
+            commit_sha: update.commit_sha.clone(),
         };
         self.editing_update = Some(update);
         self.input_mode = InputMode::Editing;
@@ -36,6 +38,8 @@ impl Input {
         self.update.project_id = None;
         self.update.body = None;
         self.update.next = None;
+        self.update.branch = None;
+        self.update.commit_sha = None;
     }
 
     pub fn submit_title(&mut self) {

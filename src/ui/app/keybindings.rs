@@ -229,6 +229,9 @@ impl App {
                         let Some(project_id) = self.opened_project_id.clone() else {
                             unreachable!("Update confirmation requires a selected project");
                         };
+                        if text_in.editing_update.is_none() {
+                            self.capture_git_context(&mut text_in.update);
+                        }
 
                         match text_in.submit_update(conn, project_id) {
                             Ok(update_id) => {

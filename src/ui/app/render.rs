@@ -1,7 +1,10 @@
 use super::{App, BrowserPane, GitEntry, GitPane};
 use crate::{
     git::repo::Head,
-    types::{project::ProjectStep, update::UpdateStep},
+    types::{
+        project::ProjectStep,
+        update::{Update, UpdateStep},
+    },
     ui::{input, theme},
 };
 use chrono::{DateTime, Local, Utc};
@@ -357,6 +360,12 @@ impl App {
                 Line::from(created_at_msg).style(theme::SECONDARY),
                 Line::from(updated_at_msg).style(theme::SECONDARY),
             ]);
+            if let Some(written_on) = written_on(update) {
+                text.lines.push(
+                    Line::from(vec!["Written on: ".into(), written_on.bold()])
+                        .style(theme::SECONDARY),
+                );
+            }
 
             let mut block =
                 Block::bordered()
@@ -881,6 +890,20 @@ fn diff_line(line: &str) -> Line<'static> {
         };
     // Tabs have no cell width, so expand them before wrapping.
     Line::from(line.replace('\t', "    ")).style(style)
+}
+
+/// `main @ 9c06ef6`, `9c06ef6` when detached, or `main` before the first commit.
+fn written_on(update: &Update) -> Option<String> {
+    let short_sha = update
+        .commit_sha
+        .as_deref()
+        .map(|sha| &sha[..sha.len().min(7)]);
+    match (update.branch.as_deref(), short_sha) {
+        (Some(branch), Some(sha)) => Some(format!("{branch} @ {sha}")),
+        (Some(branch), None) => Some(branch.to_string()),
+        (None, Some(sha)) => Some(sha.to_string()),
+        (None, None) => None,
+    }
 }
 
 fn relative_time(time: DateTime<Utc>) -> String {

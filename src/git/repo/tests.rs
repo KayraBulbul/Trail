@@ -108,6 +108,17 @@ fn detect_reports_detached_head() {
 }
 
 #[test]
+fn head_commit_is_none_without_commits_then_full_sha() {
+    let repo = TempRepo::new();
+    assert_eq!(head_commit(&repo.path), None);
+
+    repo.commit_file("README.md", "hi", "init");
+    let sha = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+
+    assert_eq!(head_commit(&repo.path), Some(sha));
+}
+
+#[test]
 fn summary_returns_none_for_no_commits() {
     let repo = TempRepo::new();
     let sum = summary(&repo.path).unwrap();
