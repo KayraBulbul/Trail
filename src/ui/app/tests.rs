@@ -231,6 +231,43 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     assert_eq!(count, 1);
 }
 
+#[test]
+fn migration_keeps_old_updates_and_old_style_inserts_working() {
+    let conn = Connection::open_in_memory().unwrap();
+    // The updates table as created by v0.7.0 and earlier.
+    conn.execute_batch(
+        "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory TEXT NOT NULL,
+             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+         CREATE TABLE updates (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL,
+             body TEXT NOT NULL, next TEXT NOT NULL,
+             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
+             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
+         INSERT INTO projects (id, name, directory) VALUES ('a', 'Alpha', '/alpha');
+         INSERT INTO updates (id, project_id, title, body, next) VALUES ('old', 'a', 'T', 'B', 'N');",
+    )
+    .unwrap();
+
+    sqlite::initialize_schema(&conn).unwrap();
+    sqlite::initialize_schema(&conn).unwrap();
+
+    let old = sqlite::get_update(&conn, "old").unwrap();
+    assert_eq!(
+        (old.title.as_str(), old.branch, old.commit_sha),
+        ("T", None, None)
+    );
+    let version: i32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+    // An older Trail binary opening the migrated file still inserts the way it always did.
+    conn.execute(
+        "INSERT INTO updates (id, project_id, title, body, next) VALUES ('older', 'a', 'T', 'B', 'N')",
+        (),
+    )
+    .unwrap();
+    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
+}
+
 fn browser() -> (App, Input, Connection) {
     let (mut app, mut input, conn) = setup();
     app.show_project_input = false;
@@ -665,6 +702,8 @@ fn create_update_validates_required_fields_and_saves_to_opened_project() {
         let update = saved.iter().find(|u| u.title == "Progress").unwrap();
         assert_eq!(update.body, "Fixed a bug");
         assert_eq!(update.next, if next.is_empty() { "None" } else { next });
+        assert_eq!(update.branch, None);
+        assert_eq!(update.commit_sha, None);
         assert_eq!(sqlite::get_updates(&conn, "b").unwrap().len(), 1);
         assert_eq!(app.opened_update_id.as_deref(), Some(update.id.as_str()));
         assert_eq!(
@@ -1340,4 +1379,46 @@ fn git_view_refresh_picks_up_new_commits() {
 
     assert_eq!(app.git.entries.len(), 2);
     assert!(app.err.is_none());
+}
+
+#[test]
+fn new_updates_record_branch_and_commit_and_edits_keep_them() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    let head = || {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let first = head();
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    submit(&mut app, &mut input, &conn, "Progress");
+    submit(&mut app, &mut input, &conn, "Did things");
+    submit(&mut app, &mut input, &conn, "");
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    let saved = &sqlite::get_updates(&conn, "git").unwrap()[0];
+    assert_eq!(saved.branch.as_deref(), Some("main"));
+    assert_eq!(saved.commit_sha.as_deref(), Some(first.as_str()));
+    let text = rendered_text(&mut app, &mut input, 160, 24);
+    assert!(text.contains(&format!("Written on: main @ {}", &first[..7])));
+
+    commit(&dir, "b.txt", "b\n", "second");
+    assert_ne!(head(), first);
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    assert!(input.editing_update.is_some());
+    submit(&mut app, &mut input, &conn, " edited");
+    for _ in 0..3 {
+        press(&mut app, &mut input, &conn, KeyCode::Enter);
+    }
+
+    let edited = sqlite::get_update(&conn, &saved.id).unwrap();
+    assert_eq!(edited.title, "Progress edited");
+    assert_eq!(edited.commit_sha.as_deref(), Some(first.as_str()));
 }

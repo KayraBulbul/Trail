@@ -39,6 +39,8 @@ impl Input {
                 project_id: None,
                 body: None,
                 next: None,
+                branch: None,
+                commit_sha: None,
             },
             update_step: UpdateStep::Title,
             editing_update: None,

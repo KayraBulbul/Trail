@@ -50,7 +50,30 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
         (),
     )?;
 
-    Ok(())
+    migrate(conn)
+}
+
+/// Bumped by each migration below; stored in SQLite's `user_version` pragma.
+const SCHEMA_VERSION: i32 = 1;
+
+/// Brings an existing database up to `SCHEMA_VERSION`. Migrations only add
+/// nullable columns, so older versions of Trail can still read and write the file.
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    if version < 1 {
+        // v0.7.1: the branch and commit an update was written on.
+        tx.execute_batch(
+            "ALTER TABLE updates ADD COLUMN branch TEXT;
+             ALTER TABLE updates ADD COLUMN commit_sha TEXT;",
+        )?;
+    }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()
 }
 
 pub fn insert_project(conn: &Connection, project: &ProjectDraft) -> Result<String> {
@@ -94,13 +117,16 @@ pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<String> 
     let uuid = Uuid::new_v4().to_string();
 
     conn.execute(
-        "INSERT INTO updates (id, project_id, title, body, next) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO updates (id, project_id, title, body, next, branch, commit_sha)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         (
             &uuid,
             &update.project_id,
             &update.title,
             &update.body,
             &update.next,
+            &update.branch,
+            &update.commit_sha,
         ),
     )?;
 
@@ -109,7 +135,7 @@ pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<String> 
 
 pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, title, body, next, created_at, updated_at
+        "SELECT id, project_id, title, body, next, created_at, updated_at, branch, commit_sha
               FROM updates
               WHERE project_id = ?1
               ORDER BY updated_at DESC, id ASC",
@@ -124,6 +150,8 @@ pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
             next: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            branch: row.get(7)?,
+            commit_sha: row.get(8)?,
         })
     })?;
 
@@ -132,7 +160,7 @@ pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
 
 pub fn get_update(conn: &Connection, update_id: &str) -> Result<Update> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, title, body, next, created_at, updated_at
+        "SELECT id, project_id, title, body, next, created_at, updated_at, branch, commit_sha
          FROM updates WHERE id = ?1",
     )?;
     let update = stmt.query_row([update_id], |row| {
@@ -144,6 +172,8 @@ pub fn get_update(conn: &Connection, update_id: &str) -> Result<Update> {
             next: row.get(4)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
+            branch: row.get(7)?,
+            commit_sha: row.get(8)?,
         })
     })?;
 

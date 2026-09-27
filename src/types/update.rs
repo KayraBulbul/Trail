@@ -5,6 +5,8 @@ pub struct UpdateDraft {
     pub project_id: Option<String>,
     pub body: Option<String>,
     pub next: Option<String>,
+    pub branch: Option<String>,
+    pub commit_sha: Option<String>,
 }
 
 pub struct Update {
@@ -15,6 +17,10 @@ pub struct Update {
     pub next: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// The git branch and `HEAD` commit when the update was written. `None` for
+    /// non-git projects, updates from before v0.7.1, and detached `HEAD`/no commits.
+    pub branch: Option<String>,
+    pub commit_sha: Option<String>,
 }
 
 #[derive(PartialEq)]

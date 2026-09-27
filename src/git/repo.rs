@@ -123,6 +123,13 @@ pub fn summary(dir: &Path) -> Result<Summary, GitError> {
     })
 }
 
+/// The full sha of `HEAD`, or `None` if `dir` isn't a repo or has no commits yet.
+pub fn head_commit(dir: &Path) -> Option<String> {
+    git(dir, &["rev-parse", "--verify", "-q", "HEAD"])
+        .ok()
+        .map(|sha| sha.trim().to_string())
+}
+
 pub fn branches(dir: &Path) -> Result<Vec<Branch>, GitError> {
     let branches = git(
         dir,

@@ -1,7 +1,10 @@
 use crate::{
     database::sqlite,
     git::repo::{self, Branch, Commit, Diff, Head, Summary},
-    types::{project::Project, update::Update},
+    types::{
+        project::Project,
+        update::{Update, UpdateDraft},
+    },
     ui::input::Input,
     update::updater::Release,
 };
@@ -252,6 +255,20 @@ impl App {
             .iter()
             .find(|project| project.id == id)
             .map(|project| PathBuf::from(&project.directory))
+    }
+
+    /// Records the branch and `HEAD` commit on a new update. Leaves both `None`
+    /// for non-git projects; git trouble shouldn't block saving an update.
+    fn capture_git_context(&self, draft: &mut UpdateDraft) {
+        let dir = self.opened_git_directory();
+        draft.branch = dir
+            .as_deref()
+            .and_then(repo::detect)
+            .and_then(|info| match info.head {
+                Head::Branch(name) => Some(name),
+                Head::Detached(_) => None,
+            });
+        draft.commit_sha = dir.as_deref().and_then(repo::head_commit);
     }
 
     fn reload_git_summary(&mut self) {
