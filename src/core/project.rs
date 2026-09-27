@@ -65,3 +65,6 @@ pub fn resolve_project(
         .map(|(_, project)| project)
         .ok_or(CoreError::NoProjects)
 }
+
+#[cfg(test)]
+mod tests;
