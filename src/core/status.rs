@@ -43,7 +43,7 @@ pub struct UpdateInfo {
     pub commits_since: Option<usize>,
 }
 
-fn update_info(update: Update, dir: &Path) -> UpdateInfo {
+pub(super) fn update_info(update: Update, dir: &Path) -> UpdateInfo {
     let commits_since = update
         .commit_sha
         .as_deref()
