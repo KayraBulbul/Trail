@@ -99,3 +99,71 @@ fn name_override_ignores_case_and_the_current_folder() {
         Err("no project has that name".into())
     );
 }
+
+impl Fixture {
+    /// Runs `init_project` from `dir`; the created project's name and `inside`, or the error message.
+    fn init(&self, dir: &str, name: Option<&str>) -> Result<(String, Option<String>), String> {
+        init_project(&self.conn, &self.root.join(dir), name)
+            .map(|init| (init.project.name, init.inside))
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[test]
+fn init_names_the_project_after_the_folder_and_saves_its_real_path() {
+    let fixture = Fixture::new();
+
+    assert_eq!(
+        fixture.init("trail/src/../", None),
+        Ok(("trail".into(), None))
+    );
+
+    let saved = &sqlite::get_projects(&fixture.conn).unwrap()[0];
+    let real = fs::canonicalize(fixture.root.join("trail")).unwrap();
+    assert_eq!(saved.directory, real.to_str().unwrap());
+    assert_eq!(fixture.resolve("trail/src/deep", None), Ok("trail".into()));
+}
+
+#[test]
+fn init_refuses_the_same_folder_twice() {
+    let fixture = Fixture::new();
+    fixture.add("Trail", &format!("{}/", fixture.path("trail")));
+
+    assert_eq!(
+        fixture.init("trail", Some("Again")),
+        Err("Trail is already a project".into())
+    );
+    assert_eq!(sqlite::get_projects(&fixture.conn).unwrap().len(), 1);
+}
+
+#[test]
+fn init_inside_another_project_reports_it_and_takes_over_lookups() {
+    let fixture = Fixture::new();
+    fixture.add("Trail", &fixture.path("trail"));
+
+    assert_eq!(
+        fixture.init("trail/nested", None),
+        Ok(("nested".into(), Some("Trail".into())))
+    );
+    assert_eq!(
+        fixture.resolve("trail/nested/inner", None),
+        Ok("nested".into())
+    );
+    assert_eq!(fixture.resolve("trail/src", None), Ok("Trail".into()));
+}
+
+#[test]
+fn init_rejects_blank_and_taken_names() {
+    let fixture = Fixture::new();
+    fixture.add("Trail", &fixture.path("trail"));
+
+    assert_eq!(
+        fixture.init("trail2", Some("   ")),
+        Err("project name can't be empty".into())
+    );
+    assert_eq!(
+        fixture.init("trail2", Some("TRAIL")),
+        Err("a project named TRAIL already exists, pick another with --name".into())
+    );
+    assert_eq!(sqlite::get_projects(&fixture.conn).unwrap().len(), 1);
+}
