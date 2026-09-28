@@ -1,4 +1,5 @@
 use crate::{
+    core::update::git_context,
     database::sqlite,
     git::repo::{self, Branch, Commit, Diff, Head, Summary},
     types::{
@@ -260,15 +261,10 @@ impl App {
     /// Records the branch and `HEAD` commit on a new update. Leaves both `None`
     /// for non-git projects; git trouble shouldn't block saving an update.
     fn capture_git_context(&self, draft: &mut UpdateDraft) {
-        let dir = self.opened_git_directory();
-        draft.branch = dir
-            .as_deref()
-            .and_then(repo::detect)
-            .and_then(|info| match info.head {
-                Head::Branch(name) => Some(name),
-                Head::Detached(_) => None,
-            });
-        draft.commit_sha = dir.as_deref().and_then(repo::head_commit);
+        let Some(dir) = self.opened_git_directory() else {
+            return;
+        };
+        (draft.branch, draft.commit_sha) = git_context(&dir);
     }
 
     fn reload_git_summary(&mut self) {
