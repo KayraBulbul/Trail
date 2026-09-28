@@ -36,3 +36,31 @@ Git view keys:
 | `r` | Refresh |
 | `Esc` | Go back (diff → commits → branches → close) |
 | `q` | Quit |
+
+## Command line
+
+Run `trail` on its own to open the TUI. The commands below work from a project's folder (or any subfolder), so AI coding agents can read and write updates too.
+
+| Command | What it does |
+| --- | --- |
+| `trail status` | The project for this folder, its git state, and the latest update |
+| `trail log [-n 5]` | The most recent updates, newest first |
+| `trail add --title "..." --body "..." [--next "..."]` | Write an update. Records the current git branch and commit. Use `--body -` to read the body from stdin |
+| `trail projects` | List all projects |
+| `trail init [--name ...]` | Make the current folder a project (named after the folder by default) |
+| `trail agents` | Print instructions for AI agents |
+| `trail update` | Install the latest version |
+
+- `-p <name>` on `status`, `log` and `add` picks a project by name instead of by folder.
+- `--json` on any command prints JSON instead of text. Missing values are `null`.
+- If a folder is inside more than one project, the deepest one is used.
+
+### Using Trail with AI agents
+
+Agents forget everything between sessions. Add Trail's instructions to your project's `AGENTS.md` or `CLAUDE.md`, and the agent will check `trail status` when it starts and record an update when it finishes:
+
+```sh
+trail agents >> AGENTS.md
+```
+
+The instructions tell the agent to never edit or delete updates. That stays in the TUI, with you.
