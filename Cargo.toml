@@ -2,6 +2,9 @@
 name = "Trail"
 version = "0.8.1"
 edition = "2024"
+description = "A shared log of where you left off on each project, for you and your AI coding agents"
+license = "MIT"
+repository = "https://github.com/KayraBulbul/Trail"
 
 [dependencies]
 chrono = {version = "0.4.45", features = ["serde"] }
