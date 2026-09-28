@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in Trail doesn't work as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `trail status` in ...
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Trail version
+      description: The output of `trail --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: For TUI issues, which terminal you're using (e.g. Ghostty, iTerm2, Windows Terminal)
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output or screenshot
+      description: Any error messages, or a screenshot for display problems

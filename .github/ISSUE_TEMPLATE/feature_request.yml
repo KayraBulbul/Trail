@@ -1,0 +1,28 @@
+name: Feature request
+description: An idea for something Trail could do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or workflow this would help with
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Trail to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - TUI
+        - Command line
+        - AI agents / MCP
+        - Git
+        - Install / update
+        - Other
