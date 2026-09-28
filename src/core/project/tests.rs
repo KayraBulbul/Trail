@@ -167,3 +167,16 @@ fn init_rejects_blank_and_taken_names() {
     );
     assert_eq!(sqlite::get_projects(&fixture.conn).unwrap().len(), 1);
 }
+
+#[test]
+fn relative_saved_directories_never_match() {
+    let fixture = Fixture::new();
+    fixture.add("Dot", ".");
+    fixture.add("Home", "~/trail");
+
+    let here = std::env::current_dir().unwrap();
+    let error = resolve_project(&fixture.conn, &here, None).err().unwrap();
+
+    assert_eq!(error.to_string(), "no project covers this folder");
+    assert_eq!(fixture.resolve("trail", Some("dot")), Ok("Dot".into()));
+}

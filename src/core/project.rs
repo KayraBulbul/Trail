@@ -79,6 +79,9 @@ pub fn resolve_project(
     let normalised_dir = std::fs::canonicalize(dir)?;
     projects
         .into_iter()
+        // Older TUI versions saved directories as typed (`.`, `~/...`). Those can't be
+        // resolved reliably: `.` would match whatever folder Trail runs from.
+        .filter(|project| Path::new(&project.directory).is_absolute())
         .filter_map(|project| {
             let project_dir = std::fs::canonicalize(&project.directory).ok()?;
             Some((project_dir, project))
