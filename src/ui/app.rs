@@ -117,10 +117,10 @@ impl App {
 
             terminal.draw(|frame| self.render(frame, &mut text_in))?;
 
-            if crossterm::event::poll(Duration::from_millis(250))? {
-                if let Event::Key(key_event) = crossterm::event::read()? {
-                    self.handle_key_event(key_event, &mut text_in, conn)?;
-                }
+            if crossterm::event::poll(Duration::from_millis(250))?
+                && let Event::Key(key_event) = crossterm::event::read()?
+            {
+                self.handle_key_event(key_event, &mut text_in, conn)?;
             }
         }
 
