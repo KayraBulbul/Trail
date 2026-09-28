@@ -148,7 +148,7 @@ pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
         "SELECT id, project_id, title, body, next, created_at, updated_at, branch, commit_sha
               FROM updates
               WHERE project_id = ?1
-              ORDER BY updated_at DESC, id ASC",
+              ORDER BY updated_at DESC, rowid DESC",
     )?;
 
     let update_iter = stmt.query_map([project_id], |row| {
