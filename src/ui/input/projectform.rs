@@ -42,7 +42,9 @@ impl Input {
         Ok(id)
     }
 
-    pub fn validate_path(&self) -> io::Result<()> {
+    /// Checks the directory exists and replaces it with its absolute path, so the
+    /// saved project doesn't depend on where Trail was started (`.`, `~/...`).
+    pub fn validate_path(&mut self) -> io::Result<()> {
         let directory = self.project.directory.as_deref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "Please enter a directory.")
         })?;
@@ -74,6 +76,17 @@ impl Input {
             ));
         }
 
+        self.project.directory = Some(abs_path.to_string_lossy().into_owned());
         Ok(())
+    }
+
+    /// Whether another project already uses this name, ignoring case.
+    pub fn name_taken(&self, conn: &Connection) -> Result<bool> {
+        let Some(name) = self.project.name.as_deref() else {
+            return Ok(false);
+        };
+        Ok(sqlite::get_projects(conn)?
+            .iter()
+            .any(|project| project.name.eq_ignore_ascii_case(name)))
     }
 }

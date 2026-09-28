@@ -60,7 +60,11 @@ fn setup() -> (App, Input, Connection) {
             input_mode: InputMode::Editing,
             ..Input::new()
         },
-        Connection::open_in_memory().unwrap(),
+        {
+            let conn = Connection::open_in_memory().unwrap();
+            sqlite::initialize_schema(&conn).unwrap();
+            conn
+        },
     )
 }
 
@@ -113,6 +117,39 @@ fn directory_supplies_an_automatic_name() {
         input.project.directory.as_deref(),
         Some(trail_directory.as_str())
     );
+    assert!(input.project_step == ProjectStep::Confirm);
+    assert!(app.err.is_none());
+}
+
+#[test]
+fn relative_directory_is_saved_as_an_absolute_path() {
+    let (mut app, mut input, conn) = setup();
+    submit(&mut app, &mut input, &conn, "Here");
+    submit(&mut app, &mut input, &conn, ".");
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    let here = fs::canonicalize(".").unwrap();
+    let saved = &sqlite::get_projects(&conn).unwrap()[0];
+    assert_eq!(saved.directory, here.to_str().unwrap());
+}
+
+#[test]
+fn taken_project_name_returns_to_the_name_step() {
+    let temp_dir = TestDirectory::new();
+    let directory = temp_dir.create_project_directory("Other");
+    let (mut app, mut input, conn) = setup();
+    conn.execute(
+        "INSERT INTO projects (id, name, directory) VALUES ('t', 'Trail', '/trail')",
+        (),
+    )
+    .unwrap();
+
+    submit(&mut app, &mut input, &conn, "trail");
+    submit(&mut app, &mut input, &conn, &directory);
+    assert!(input.project_step == ProjectStep::Name);
+    assert!(app.err.as_deref().unwrap().contains("already exists"));
+
+    submit(&mut app, &mut input, &conn, "Other");
     assert!(input.project_step == ProjectStep::Confirm);
     assert!(app.err.is_none());
 }

@@ -111,15 +111,7 @@ impl App {
                         if self.err.is_none() && text_in.project.directory.is_none() {
                             text_in.project_step = ProjectStep::Directory;
                         } else if self.err.is_none() {
-                            match text_in.validate_path() {
-                                Ok(()) => {
-                                    text_in.project_step = ProjectStep::Confirm;
-                                }
-                                Err(error) => {
-                                    self.err = Some(format!("Couldn't validate path: {error}"));
-                                    text_in.project_step = ProjectStep::Directory;
-                                }
-                            }
+                            self.confirm_project_form(text_in, conn);
                         }
                     }
                     KeyCode::Enter if text_in.project_step == ProjectStep::Directory => {
@@ -132,15 +124,7 @@ impl App {
                                 "Couldn't derive a project name. Please enter one.".to_string(),
                             )
                         } else {
-                            match text_in.validate_path() {
-                                Ok(()) => {
-                                    text_in.project_step = ProjectStep::Confirm;
-                                    self.err = None;
-                                }
-                                Err(error) => {
-                                    self.err = Some(format!("Couldn't validate path: {error}"));
-                                }
-                            }
+                            self.confirm_project_form(text_in, conn);
                         }
                     }
                     KeyCode::Enter if text_in.project_step == ProjectStep::Confirm => {
@@ -538,5 +522,30 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Moves the new-project form to Confirm once the directory exists and the
+    /// name isn't taken. Otherwise shows why and returns to the step to fix.
+    fn confirm_project_form(&mut self, text_in: &mut input::Input, conn: &Connection) {
+        if let Err(error) = text_in.validate_path() {
+            self.err = Some(format!("Couldn't validate path: {error}"));
+            text_in.project_step = ProjectStep::Directory;
+            return;
+        }
+
+        match text_in.name_taken(conn) {
+            Ok(false) => {
+                self.err = None;
+                text_in.project_step = ProjectStep::Confirm;
+            }
+            Ok(true) => {
+                let name = text_in.project.name.as_deref().unwrap_or_default();
+                self.err = Some(format!(
+                    "A project named {name} already exists. Please enter another name."
+                ));
+                text_in.project_step = ProjectStep::Name;
+            }
+            Err(error) => self.err = Some(format!("Couldn't check project names: {error}")),
+        }
     }
 }
