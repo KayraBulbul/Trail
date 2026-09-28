@@ -1,13 +1,11 @@
 use super::{App, BrowserPane, GitEntry, GitPane};
 use crate::{
+    format,
     git::repo::Head,
-    types::{
-        project::ProjectStep,
-        update::{Update, UpdateStep},
-    },
+    types::{project::ProjectStep, update::UpdateStep},
     ui::{input, theme},
 };
-use chrono::{DateTime, Local, Utc};
+use chrono::Local;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -360,7 +358,9 @@ impl App {
                 Line::from(created_at_msg).style(theme::SECONDARY),
                 Line::from(updated_at_msg).style(theme::SECONDARY),
             ]);
-            if let Some(written_on) = written_on(update) {
+            if let Some(written_on) =
+                format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
+            {
                 text.lines.push(
                     Line::from(vec!["Written on: ".into(), written_on.bold()])
                         .style(theme::SECONDARY),
@@ -448,7 +448,10 @@ impl App {
             count => parts.push(format!("{count} files changed")),
         }
         if let Some(last_commit) = summary.last_commit {
-            parts.push(format!("last commit {}", relative_time(last_commit)));
+            parts.push(format!(
+                "last commit {}",
+                format::relative_time(last_commit)
+            ));
         }
 
         Some(
@@ -501,7 +504,7 @@ impl App {
                             " ".into(),
                             commit.subject.as_str().into(),
                             Span::styled(
-                                format!(" · {}", relative_time(commit.time)),
+                                format!(" · {}", format::relative_time(commit.time)),
                                 theme::SECONDARY,
                             ),
                         ])),
@@ -517,7 +520,7 @@ impl App {
                 .iter()
                 .map(|branch| {
                     let age = Span::styled(
-                        format!(" · {}", relative_time(branch.last_commit)),
+                        format!(" · {}", format::relative_time(branch.last_commit)),
                         theme::SECONDARY,
                     );
                     if branch.is_head {
@@ -890,32 +893,6 @@ fn diff_line(line: &str) -> Line<'static> {
         };
     // Tabs have no cell width, so expand them before wrapping.
     Line::from(line.replace('\t', "    ")).style(style)
-}
-
-/// `main @ 9c06ef6`, `9c06ef6` when detached, or `main` before the first commit.
-fn written_on(update: &Update) -> Option<String> {
-    let short_sha = update
-        .commit_sha
-        .as_deref()
-        .map(|sha| &sha[..sha.len().min(7)]);
-    match (update.branch.as_deref(), short_sha) {
-        (Some(branch), Some(sha)) => Some(format!("{branch} @ {sha}")),
-        (Some(branch), None) => Some(branch.to_string()),
-        (None, Some(sha)) => Some(sha.to_string()),
-        (None, None) => None,
-    }
-}
-
-fn relative_time(time: DateTime<Utc>) -> String {
-    let seconds = (Utc::now() - time).num_seconds().max(0);
-    match seconds {
-        0..60 => "just now".to_string(),
-        60..3600 => format!("{}m ago", seconds / 60),
-        3600..86400 => format!("{}h ago", seconds / 3600),
-        86400..2_592_000 => format!("{}d ago", seconds / 86400),
-        2_592_000..31_536_000 => format!("{}mo ago", seconds / 2_592_000),
-        _ => format!("{}y ago", seconds / 31_536_000),
-    }
 }
 
 // Wrap text and locate the cursor together so both use the same terminal cell widths.

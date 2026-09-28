@@ -13,6 +13,7 @@ use crate::ui::app::{BrowserPane, GitState};
 mod cli;
 mod core;
 mod database;
+mod format;
 mod git;
 mod types;
 mod ui;
