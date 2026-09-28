@@ -25,6 +25,8 @@ fn writes_wait_for_another_connection_instead_of_failing() {
 
     assert!(inserted.is_ok(), "{inserted:?}");
     assert_eq!(get_projects(&cli).unwrap().len(), 1);
+    // Windows can't delete a database file that's still open.
+    drop(cli);
     fs::remove_dir_all(&dir).unwrap();
 }
 

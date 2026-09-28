@@ -76,14 +76,14 @@ pub fn resolve_project(
         return Ok(project);
     }
 
-    let normalised_dir = std::fs::canonicalize(dir)?;
+    let normalised_dir = dunce::canonicalize(dir)?;
     projects
         .into_iter()
         // Older TUI versions saved directories as typed (`.`, `~/...`). Those can't be
         // resolved reliably: `.` would match whatever folder Trail runs from.
         .filter(|project| Path::new(&project.directory).is_absolute())
         .filter_map(|project| {
-            let project_dir = std::fs::canonicalize(&project.directory).ok()?;
+            let project_dir = dunce::canonicalize(&project.directory).ok()?;
             Some((project_dir, project))
         })
         .filter(|(project_dir, _)| normalised_dir.starts_with(project_dir))
@@ -93,11 +93,11 @@ pub fn resolve_project(
 }
 
 pub fn init_project(conn: &Connection, dir: &Path, name: Option<&str>) -> Result<Init, CoreError> {
-    let dir = std::fs::canonicalize(dir)?;
+    let dir = dunce::canonicalize(dir)?;
 
     let inside = match resolve_project(conn, &dir, None) {
         Ok(project) => {
-            if std::fs::canonicalize(&project.directory)? == dir {
+            if dunce::canonicalize(&project.directory)? == dir {
                 return Err(CoreError::AlreadyProject(project.name));
             }
             Some(project.name)
