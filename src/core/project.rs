@@ -5,6 +5,7 @@ use rusqlite::Connection;
 
 use crate::{database::sqlite, types::project::Project};
 
+#[derive(Debug)]
 pub enum CoreError {
     NoProjects,
     NameNotFound,

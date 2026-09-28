@@ -355,3 +355,29 @@ fn uncommitted_diff_scoped_to_subdirectory() {
     assert!(diff.patch.is_empty());
     assert_eq!(diff.untracked, ["inner.txt"]);
 }
+
+#[test]
+fn commits_since_counts_newer_commits_and_is_none_for_unknown_sha() {
+    let repo = TempRepo::new();
+    repo.commit_file("a.txt", "a", "first");
+    let first = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(commits_since(&repo.path, &first), Some(0));
+
+    repo.commit_file("b.txt", "b", "second");
+    repo.commit_file("c.txt", "c", "third");
+
+    assert_eq!(commits_since(&repo.path, &first), Some(2));
+    assert_eq!(commits_since(&repo.path, &"0".repeat(40)), None);
+}
+
+#[test]
+fn commits_since_scoped_to_subdirectory() {
+    let repo = TempRepo::new();
+    fs::create_dir_all(repo.path.join("sub")).unwrap();
+    repo.commit_file("a.txt", "a", "first");
+    let first = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.commit_file("sub/b.txt", "b", "inside");
+    repo.commit_file("c.txt", "c", "outside");
+
+    assert_eq!(commits_since(&repo.path.join("sub"), &first), Some(1));
+}

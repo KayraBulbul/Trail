@@ -98,3 +98,6 @@ pub fn status(conn: &Connection, project: &Project) -> Result<Status, CoreError>
         latest_update,
     })
 }
+
+#[cfg(test)]
+mod tests;
