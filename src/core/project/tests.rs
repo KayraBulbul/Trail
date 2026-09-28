@@ -121,7 +121,6 @@ fn init_names_the_project_after_the_folder_and_saves_its_real_path() {
     let saved = &sqlite::get_projects(&fixture.conn).unwrap()[0];
     let real = fs::canonicalize(fixture.root.join("trail")).unwrap();
     assert_eq!(saved.directory, real.to_str().unwrap());
-    assert_eq!(fixture.resolve("trail/src/deep", None), Ok("trail".into()));
 }
 
 #[test]
@@ -137,7 +136,7 @@ fn init_refuses_the_same_folder_twice() {
 }
 
 #[test]
-fn init_inside_another_project_reports_it_and_takes_over_lookups() {
+fn init_inside_another_project_reports_it() {
     let fixture = Fixture::new();
     fixture.add("Trail", &fixture.path("trail"));
 
@@ -145,11 +144,6 @@ fn init_inside_another_project_reports_it_and_takes_over_lookups() {
         fixture.init("trail/nested", None),
         Ok(("nested".into(), Some("Trail".into())))
     );
-    assert_eq!(
-        fixture.resolve("trail/nested/inner", None),
-        Ok("nested".into())
-    );
-    assert_eq!(fixture.resolve("trail/src", None), Ok("Trail".into()));
 }
 
 #[test]

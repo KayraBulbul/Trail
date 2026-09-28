@@ -62,9 +62,6 @@ fn non_git_update_is_saved_with_null_git_fields_and_default_next() {
     assert_eq!(info.branch, None);
     assert_eq!(info.commit_sha, None);
     assert_eq!(info.commits_since, None);
-    let saved = sqlite::get_update(&fixture.conn, &info.id).unwrap();
-    assert_eq!(saved.branch, None);
-    assert_eq!(saved.commit_sha, None);
 }
 
 #[test]

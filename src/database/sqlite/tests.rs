@@ -27,3 +27,40 @@ fn writes_wait_for_another_connection_instead_of_failing() {
     assert_eq!(get_projects(&cli).unwrap().len(), 1);
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn migration_keeps_old_updates_and_old_style_inserts_working() {
+    let conn = Connection::open_in_memory().unwrap();
+    // The updates table as created by v0.7.0 and earlier.
+    conn.execute_batch(
+        "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory TEXT NOT NULL,
+             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+         CREATE TABLE updates (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL,
+             body TEXT NOT NULL, next TEXT NOT NULL,
+             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
+             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
+         INSERT INTO projects (id, name, directory) VALUES ('a', 'Alpha', '/alpha');
+         INSERT INTO updates (id, project_id, title, body, next) VALUES ('old', 'a', 'T', 'B', 'N');",
+    )
+    .unwrap();
+
+    initialize_schema(&conn).unwrap();
+    initialize_schema(&conn).unwrap();
+
+    let old = get_update(&conn, "old").unwrap();
+    assert_eq!(
+        (old.title.as_str(), old.branch, old.commit_sha),
+        ("T", None, None)
+    );
+    let version: i32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+    // An older Trail binary opening the migrated file still inserts the way it always did.
+    conn.execute(
+        "INSERT INTO updates (id, project_id, title, body, next) VALUES ('older', 'a', 'T', 'B', 'N')",
+        (),
+    )
+    .unwrap();
+    assert_eq!(get_updates(&conn, "a").unwrap().len(), 2);
+}
