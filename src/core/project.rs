@@ -1,12 +1,23 @@
 use std::fmt;
 use std::{io, path::Path};
 
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::core::status::ProjectInfo;
+use crate::git::repo;
 use crate::types::project::ProjectDraft;
 use crate::{database::sqlite, types::project::Project};
+
+#[derive(Serialize)]
+pub struct ProjectSummary {
+    pub name: String,
+    pub directory: String,
+    pub is_git: bool,
+    pub update_count: usize,
+    pub last_update_at: Option<DateTime<Utc>>,
+}
 
 #[derive(Serialize)]
 pub struct Init {
@@ -128,6 +139,23 @@ pub fn init_project(conn: &Connection, dir: &Path, name: Option<&str>) -> Result
     let project = ProjectInfo { name, directory };
 
     Ok(Init { project, inside })
+}
+
+/// Every project, most recently updated first, with its update count and git state.
+pub fn list_projects(conn: &Connection) -> Result<Vec<ProjectSummary>, CoreError> {
+    sqlite::get_projects(conn)?
+        .into_iter()
+        .map(|project| {
+            let updates = sqlite::get_updates(conn, &project.id)?;
+            Ok(ProjectSummary {
+                is_git: repo::detect(Path::new(&project.directory)).is_some(),
+                update_count: updates.len(),
+                last_update_at: updates.first().map(|update| update.updated_at),
+                name: project.name,
+                directory: project.directory,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
