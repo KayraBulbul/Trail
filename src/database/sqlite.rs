@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, path::Path, time::Duration};
 
 use crate::types::{
     project::{Project, ProjectDraft},
@@ -18,7 +18,17 @@ pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
     let trail_dir = data_dir.join("trail");
     std::fs::create_dir_all(&trail_dir)?;
 
-    let conn = Connection::open(trail_dir.join("trail.db"))?;
+    Ok(open_database(&trail_dir.join("trail.db"))?)
+}
+
+/// How long to wait for another Trail process (the TUI or a CLI command) to
+/// finish writing before giving up with "database is locked". rusqlite's
+/// default is the same today; setting it here keeps us from relying on that.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub fn open_database(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
     initialize_schema(&conn)?;
 
     Ok(conn)
@@ -138,7 +148,7 @@ pub fn get_updates(conn: &Connection, project_id: &str) -> Result<Vec<Update>> {
         "SELECT id, project_id, title, body, next, created_at, updated_at, branch, commit_sha
               FROM updates
               WHERE project_id = ?1
-              ORDER BY updated_at DESC, id ASC",
+              ORDER BY updated_at DESC, rowid DESC",
     )?;
 
     let update_iter = stmt.query_map([project_id], |row| {
@@ -199,3 +209,6 @@ pub fn delete_update(conn: &Connection, update_id: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

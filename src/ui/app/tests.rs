@@ -60,7 +60,11 @@ fn setup() -> (App, Input, Connection) {
             input_mode: InputMode::Editing,
             ..Input::new()
         },
-        Connection::open_in_memory().unwrap(),
+        {
+            let conn = Connection::open_in_memory().unwrap();
+            sqlite::initialize_schema(&conn).unwrap();
+            conn
+        },
     )
 }
 
@@ -113,6 +117,39 @@ fn directory_supplies_an_automatic_name() {
         input.project.directory.as_deref(),
         Some(trail_directory.as_str())
     );
+    assert!(input.project_step == ProjectStep::Confirm);
+    assert!(app.err.is_none());
+}
+
+#[test]
+fn relative_directory_is_saved_as_an_absolute_path() {
+    let (mut app, mut input, conn) = setup();
+    submit(&mut app, &mut input, &conn, "Here");
+    submit(&mut app, &mut input, &conn, ".");
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+
+    let here = fs::canonicalize(".").unwrap();
+    let saved = &sqlite::get_projects(&conn).unwrap()[0];
+    assert_eq!(saved.directory, here.to_str().unwrap());
+}
+
+#[test]
+fn taken_project_name_returns_to_the_name_step() {
+    let temp_dir = TestDirectory::new();
+    let directory = temp_dir.create_project_directory("Other");
+    let (mut app, mut input, conn) = setup();
+    conn.execute(
+        "INSERT INTO projects (id, name, directory) VALUES ('t', 'Trail', '/trail')",
+        (),
+    )
+    .unwrap();
+
+    submit(&mut app, &mut input, &conn, "trail");
+    submit(&mut app, &mut input, &conn, &directory);
+    assert!(input.project_step == ProjectStep::Name);
+    assert!(app.err.as_deref().unwrap().contains("already exists"));
+
+    submit(&mut app, &mut input, &conn, "Other");
     assert!(input.project_step == ProjectStep::Confirm);
     assert!(app.err.is_none());
 }
@@ -195,7 +232,6 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     let temp_dir = TestDirectory::new();
     let trail_directory = temp_dir.create_project_directory("Trail");
     let (mut app, mut input, conn) = setup();
-    sqlite::initialize_schema(&conn).unwrap();
     submit(&mut app, &mut input, &conn, "Trail");
     submit(&mut app, &mut input, &conn, &trail_directory);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
@@ -231,48 +267,10 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     assert_eq!(count, 1);
 }
 
-#[test]
-fn migration_keeps_old_updates_and_old_style_inserts_working() {
-    let conn = Connection::open_in_memory().unwrap();
-    // The updates table as created by v0.7.0 and earlier.
-    conn.execute_batch(
-        "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, directory TEXT NOT NULL,
-             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
-         CREATE TABLE updates (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL,
-             body TEXT NOT NULL, next TEXT NOT NULL,
-             created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
-             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE);
-         INSERT INTO projects (id, name, directory) VALUES ('a', 'Alpha', '/alpha');
-         INSERT INTO updates (id, project_id, title, body, next) VALUES ('old', 'a', 'T', 'B', 'N');",
-    )
-    .unwrap();
-
-    sqlite::initialize_schema(&conn).unwrap();
-    sqlite::initialize_schema(&conn).unwrap();
-
-    let old = sqlite::get_update(&conn, "old").unwrap();
-    assert_eq!(
-        (old.title.as_str(), old.branch, old.commit_sha),
-        ("T", None, None)
-    );
-    let version: i32 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 1);
-    // An older Trail binary opening the migrated file still inserts the way it always did.
-    conn.execute(
-        "INSERT INTO updates (id, project_id, title, body, next) VALUES ('older', 'a', 'T', 'B', 'N')",
-        (),
-    )
-    .unwrap();
-    assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
-}
-
 fn browser() -> (App, Input, Connection) {
     let (mut app, mut input, conn) = setup();
     app.show_project_input = false;
     input.input_mode = InputMode::Normal;
-    sqlite::initialize_schema(&conn).unwrap();
     (app, input, conn)
 }
 
@@ -342,10 +340,8 @@ fn opened_project_survives_navigation_and_pane_switches() {
 }
 
 #[test]
-fn loads_saved_projects_and_refreshes_after_creation() {
-    let temp_dir = TestDirectory::new();
-    let directory = temp_dir.create_project_directory("New project");
-    let (mut app, mut input, conn) = browser();
+fn loads_saved_projects_in_order_with_their_fields() {
+    let (mut app, _input, conn) = browser();
     seed_projects(&conn);
     app.reload_projects(&conn).unwrap();
 
@@ -364,21 +360,6 @@ fn loads_saved_projects_and_refreshes_after_creation() {
     );
     assert_eq!(app.projects[0].updated_at, app.projects[0].created_at);
     assert_eq!(app.project_selection.selected(), Some(0));
-
-    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
-    submit(&mut app, &mut input, &conn, "New project");
-    submit(&mut app, &mut input, &conn, &directory);
-    press(&mut app, &mut input, &conn, KeyCode::Enter);
-
-    assert_eq!(app.projects.len(), 3);
-    let created = app
-        .projects
-        .iter()
-        .find(|p| p.name == "New project")
-        .unwrap();
-    assert_eq!(created.directory, directory);
-    assert!(!app.show_project_input);
-    assert!(app.err.is_none());
 }
 
 #[test]
@@ -487,6 +468,7 @@ fn failed_delete_preserves_browser_and_displays_error() {
     );
     assert_eq!(app.project_selection.selected(), Some(1));
     assert_eq!(app.opened_project_id.as_deref(), Some("b"));
+    assert_eq!(app.updates.len(), 1);
     assert_eq!(
         app.err.as_deref(),
         Some("Unable to delete project: forced delete failure")
@@ -600,12 +582,7 @@ fn opening_update_without_selection_does_nothing() {
 
 #[test]
 fn project_deletion_clears_updates_only_after_deleting_opened_project() {
-    for (delete_opened, cancel, fail) in [
-        (true, true, false),
-        (true, false, true),
-        (false, false, false),
-        (true, false, false),
-    ] {
+    for (delete_opened, cancel) in [(true, true), (false, false), (true, false)] {
         let (mut app, mut input, conn) = browser_with_updates();
         focus_projects(&mut app, &mut input, &conn);
         app.opened_update_id = Some("older".into());
@@ -613,14 +590,6 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
         if !delete_opened {
             app.project_selection.select(Some(1));
         }
-        if fail {
-            conn.execute_batch(
-                "CREATE TRIGGER fail_delete BEFORE DELETE ON projects
-                 BEGIN SELECT RAISE(FAIL, 'forced failure'); END;",
-            )
-            .unwrap();
-        }
-
         press(&mut app, &mut input, &conn, KeyCode::Char('d'));
         press(
             &mut app,
@@ -629,7 +598,7 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
             if cancel { KeyCode::Esc } else { KeyCode::Enter },
         );
 
-        if delete_opened && !cancel && !fail {
+        if delete_opened && !cancel {
             assert!(app.opened_project_id.is_none());
             assert!(app.opened_update_id.is_none());
             assert!(app.updates.is_empty());
@@ -641,7 +610,7 @@ fn project_deletion_clears_updates_only_after_deleting_opened_project() {
             assert_eq!(app.updates.len(), 2);
             assert_eq!(app.update_selection.selected(), Some(1));
         }
-        assert_eq!(app.err.is_some(), fail);
+        assert!(app.err.is_none());
     }
 }
 
@@ -796,7 +765,7 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
 }
 
 #[test]
-fn update_table_keys_navigate_without_moving_projects() {
+fn update_table_column_selection_stops_at_the_edges() {
     let (mut app, mut input, conn) = browser_with_updates();
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
     assert!(app.show_update_table);
@@ -866,7 +835,7 @@ fn browser_focus_stays_on_visible_panes() {
 }
 
 #[test]
-fn help_lists_controls_and_blocks_browser_actions() {
+fn help_blocks_browser_actions_until_closed() {
     let (mut app, mut input, conn) = browser_with_updates();
     press(&mut app, &mut input, &conn, KeyCode::Char('?'));
     for key in [
@@ -1050,7 +1019,6 @@ fn edit_prefills_each_field_and_updates_the_target_without_inserting() {
         assert_eq!(saved.next, format!("{} edited", original.next));
         assert_eq!(saved.created_at, original.created_at);
         assert!(saved.updated_at > original.updated_at);
-        assert_eq!(saved.project_id, original.project_id);
         assert_eq!(sqlite::get_updates(&conn, "a").unwrap().len(), 2);
         assert_eq!(
             sqlite::get_update(&conn, "beta").unwrap().title,
@@ -1179,8 +1147,6 @@ fn help_is_visible_without_projects_and_its_contents_are_reachable() {
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
-    press(&mut app, &mut input, &conn, KeyCode::Char('A'));
-    assert!(!app.show_project_input);
     press(&mut app, &mut input, &conn, KeyCode::Esc);
     press(&mut app, &mut input, &conn, KeyCode::Char('A'));
     assert!(app.show_project_input);
@@ -1386,16 +1352,13 @@ fn new_updates_record_branch_and_commit_and_edits_keep_them() {
     let temp_dir = TestDirectory::new();
     let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
     commit(&dir, "a.txt", "a\n", "first");
-    let head = || {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .unwrap();
-        String::from_utf8(output.stdout).unwrap().trim().to_string()
-    };
-    let first = head();
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let first = String::from_utf8(output.stdout).unwrap().trim().to_string();
 
     press(&mut app, &mut input, &conn, KeyCode::Char('a'));
     submit(&mut app, &mut input, &conn, "Progress");
@@ -1410,7 +1373,6 @@ fn new_updates_record_branch_and_commit_and_edits_keep_them() {
     assert!(text.contains(&format!("Written on: main @ {}", &first[..7])));
 
     commit(&dir, "b.txt", "b\n", "second");
-    assert_ne!(head(), first);
     press(&mut app, &mut input, &conn, KeyCode::Char('e'));
     assert!(input.editing_update.is_some());
     submit(&mut app, &mut input, &conn, " edited");

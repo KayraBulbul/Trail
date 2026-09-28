@@ -61,18 +61,14 @@ impl Drop for TempRepo {
 }
 
 #[test]
-fn detect_returns_none_outside_a_repo() {
+fn detect_returns_none_outside_a_repo_or_for_a_missing_directory() {
     let dir = std::env::temp_dir().join(format!("trail-plain-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&dir).unwrap();
 
     assert!(detect(&dir).is_none());
+    assert!(detect(&dir.join("missing")).is_none());
 
     fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn detect_returns_none_for_missing_directory() {
-    assert!(detect(Path::new("/definitely/not/a/real/dir")).is_none());
 }
 
 #[test]
@@ -119,35 +115,18 @@ fn head_commit_is_none_without_commits_then_full_sha() {
 }
 
 #[test]
-fn summary_returns_none_for_no_commits() {
+fn summary_last_commit_is_none_until_the_first_commit() {
     let repo = TempRepo::new();
-    let sum = summary(&repo.path).unwrap();
+    assert!(summary(&repo.path).unwrap().last_commit.is_none());
 
-    assert!(sum.last_commit.is_none());
-}
-
-#[test]
-fn summary_includes_last_commit() {
-    let repo = TempRepo::new();
     repo.commit_file("README.md", "hi", "init");
-    let sum = summary(&repo.path).unwrap();
 
-    assert!(sum.last_commit.is_some());
+    assert!(summary(&repo.path).unwrap().last_commit.is_some());
 }
 
+/// Outer counts a modified file and two untracked ones; inner only sees its own.
 #[test]
-fn summary_files_changed_count_includes_untracked() {
-    let repo = TempRepo::new();
-    repo.commit_file("README.md", "hi", "init");
-    fs::write(repo.path.join("README.md"), "changed").unwrap();
-    fs::write(repo.path.join("test.txt"), "hello").unwrap();
-    let sum = summary(&repo.path).unwrap();
-
-    assert_eq!(sum.files_changed, 2);
-}
-
-#[test]
-fn summary_files_changed_scoped_to_subdirectory() {
+fn summary_files_changed_includes_untracked_and_is_scoped_to_subdirectory() {
     let repo = TempRepo::new();
 
     let sub_directory = repo.path.join("sub/");
@@ -253,27 +232,12 @@ fn commit_diff_scoped_to_subdirectory() {
 }
 
 #[test]
-fn cap_lines_keeps_short_text_whole() {
-    assert_eq!(
-        cap_lines("a\nb\n"),
-        (vec!["a".to_string(), "b".to_string()], false)
-    );
-}
-
-#[test]
-fn cap_lines_at_limit_is_not_truncated() {
+fn cap_lines_truncates_only_past_the_limit() {
     let (lines, truncated) = cap_lines(&"x\n".repeat(DIFF_LINE_LIMIT));
+    assert_eq!((lines.len(), truncated), (DIFF_LINE_LIMIT, false));
 
-    assert_eq!(lines.len(), DIFF_LINE_LIMIT);
-    assert!(!truncated);
-}
-
-#[test]
-fn cap_lines_over_limit_is_truncated() {
     let (lines, truncated) = cap_lines(&"x\n".repeat(DIFF_LINE_LIMIT + 1));
-
-    assert_eq!(lines.len(), DIFF_LINE_LIMIT);
-    assert!(truncated);
+    assert_eq!((lines.len(), truncated), (DIFF_LINE_LIMIT, true));
 }
 
 #[test]
@@ -354,4 +318,30 @@ fn uncommitted_diff_scoped_to_subdirectory() {
 
     assert!(diff.patch.is_empty());
     assert_eq!(diff.untracked, ["inner.txt"]);
+}
+
+#[test]
+fn commits_since_counts_newer_commits_and_is_none_for_unknown_sha() {
+    let repo = TempRepo::new();
+    repo.commit_file("a.txt", "a", "first");
+    let first = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(commits_since(&repo.path, &first), Some(0));
+
+    repo.commit_file("b.txt", "b", "second");
+    repo.commit_file("c.txt", "c", "third");
+
+    assert_eq!(commits_since(&repo.path, &first), Some(2));
+    assert_eq!(commits_since(&repo.path, &"0".repeat(40)), None);
+}
+
+#[test]
+fn commits_since_scoped_to_subdirectory() {
+    let repo = TempRepo::new();
+    fs::create_dir_all(repo.path.join("sub")).unwrap();
+    repo.commit_file("a.txt", "a", "first");
+    let first = repo.run(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.commit_file("sub/b.txt", "b", "inside");
+    repo.commit_file("c.txt", "c", "outside");
+
+    assert_eq!(commits_since(&repo.path.join("sub"), &first), Some(1));
 }
