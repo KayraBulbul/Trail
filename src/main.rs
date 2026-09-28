@@ -15,6 +15,7 @@ mod core;
 mod database;
 mod format;
 mod git;
+mod mcp;
 mod types;
 mod ui;
 mod update;

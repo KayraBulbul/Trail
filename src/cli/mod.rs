@@ -16,7 +16,7 @@ use crate::{
         update::add_update,
     },
     database::sqlite,
-    update,
+    mcp, update,
 };
 
 mod output;
@@ -77,6 +77,8 @@ pub enum Command {
     },
     /// Print instructions to paste into an AGENTS.md or CLAUDE.md.
     Agents,
+    /// Run an MCP server on stdin/stdout, for AI agents that support MCP.
+    Mcp,
     /// Install the latest version.
     Update,
 }
@@ -112,6 +114,12 @@ pub fn run(command: Command, json: bool) -> Result<ExitCode, Box<dyn std::error:
         }
         Command::Agents => {
             print!("{AGENTS_SNIPPET}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Mcp => {
+            let conn = sqlite::create_database()?;
+            let cwd = env::current_dir()?;
+            mcp::serve(&conn, &cwd, io::stdin().lock(), io::stdout().lock())?;
             Ok(ExitCode::SUCCESS)
         }
         command => {
@@ -200,7 +208,9 @@ fn execute(
                 output::init(&init)
             }
         }
-        Command::Update | Command::Agents => unreachable!("handled in run without a database"),
+        Command::Update | Command::Agents | Command::Mcp => {
+            unreachable!("handled in run, not a one-shot command")
+        }
     })
 }
 
