@@ -139,9 +139,16 @@ fn update_meta(update: &UpdateInfo) -> String {
     parts.join(" · ")
 }
 
+/// Indents each line by two spaces, leaving blank lines empty (no trailing spaces).
 fn indent(text: &str) -> String {
     text.lines()
-        .map(|line| format!("  {line}"))
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("  {line}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

@@ -113,7 +113,7 @@ fn init_add_status_and_log_from_a_subfolder() {
         &conn,
         &sub,
         &["add", "--title", "First", "--body", "-"],
-        "Line one\nLine two\n\n",
+        "Line one\n\nLine two\n\n",
     )
     .unwrap();
     assert_eq!(added, "Added to Demo: First");
@@ -137,7 +137,7 @@ fn init_add_status_and_log_from_a_subfolder() {
     assert!(!log.contains("First"), "{log}");
     let log = trail(&conn, &sub, &["log"], "").unwrap();
     assert!(
-        log.contains("First  (just now)\n  Line one\n  Line two\n  Next: None"),
+        log.contains("First  (just now)\n  Line one\n\n  Line two\n  Next: None"),
         "{log}"
     );
 }
