@@ -119,7 +119,7 @@ fn init_names_the_project_after_the_folder_and_saves_its_real_path() {
     );
 
     let saved = &sqlite::get_projects(&fixture.conn).unwrap()[0];
-    let real = fs::canonicalize(fixture.root.join("trail")).unwrap();
+    let real = dunce::canonicalize(fixture.root.join("trail")).unwrap();
     assert_eq!(saved.directory, real.to_str().unwrap());
 }
 

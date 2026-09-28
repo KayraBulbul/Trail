@@ -28,6 +28,16 @@ impl Drop for TestDirectory {
     }
 }
 
+/// The form saves directories canonicalized, which differs from the path typed in:
+/// macOS temp folders are symlinks, and Windows expands short names like `RUNNER~1`.
+fn canonical(path: &str) -> String {
+    dunce::canonicalize(path)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
 fn setup() -> (App, Input, Connection) {
     (
         App {
@@ -113,10 +123,7 @@ fn directory_supplies_an_automatic_name() {
     submit(&mut app, &mut input, &conn, &trail_directory);
 
     assert_eq!(input.project.name.as_deref(), Some("Trail"));
-    assert_eq!(
-        input.project.directory.as_deref(),
-        Some(trail_directory.as_str())
-    );
+    assert_eq!(input.project.directory, Some(canonical(&trail_directory)));
     assert!(input.project_step == ProjectStep::Confirm);
     assert!(app.err.is_none());
 }
@@ -128,9 +135,8 @@ fn relative_directory_is_saved_as_an_absolute_path() {
     submit(&mut app, &mut input, &conn, ".");
     press(&mut app, &mut input, &conn, KeyCode::Enter);
 
-    let here = fs::canonicalize(".").unwrap();
     let saved = &sqlite::get_projects(&conn).unwrap()[0];
-    assert_eq!(saved.directory, here.to_str().unwrap());
+    assert_eq!(saved.directory, canonical("."));
 }
 
 #[test]
@@ -172,7 +178,7 @@ fn replacement_name_must_be_nonblank() {
     submit(&mut app, &mut input, &conn, "Root");
     assert!(input.project_step == ProjectStep::Confirm);
     assert_eq!(input.project.name.as_deref(), Some("Root"));
-    assert_eq!(input.project.directory.as_deref(), Some("/"));
+    assert_eq!(input.project.directory, Some(canonical("/")));
     assert!(app.err.is_none());
 }
 
@@ -217,10 +223,7 @@ fn typing_during_confirm_does_not_change_the_draft() {
 
     assert!(input.project_step == ProjectStep::Confirm);
     assert_eq!(input.project.name.as_deref(), Some("Trail"));
-    assert_eq!(
-        input.project.directory.as_deref(),
-        Some(trail_directory.as_str())
-    );
+    assert_eq!(input.project.directory, Some(canonical(&trail_directory)));
     assert!(input.input.is_empty());
     assert_eq!(input.character_index, 0);
     assert!(app.show_project_input);
@@ -257,10 +260,7 @@ fn sqlite_save_persists_project_and_failed_insert_preserves_draft() {
     assert!(input.input_mode == InputMode::Editing);
     assert!(input.project_step == ProjectStep::Name);
     assert_eq!(input.project.name.as_deref(), Some("Another"));
-    assert_eq!(
-        input.project.directory.as_deref(),
-        Some(another_directory.as_str())
-    );
+    assert_eq!(input.project.directory, Some(canonical(&another_directory)));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
         .unwrap();

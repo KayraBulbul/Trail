@@ -66,7 +66,7 @@ impl Input {
             PathBuf::from(directory)
         };
 
-        let abs_path = fs::canonicalize(path)?;
+        let abs_path = dunce::canonicalize(path)?;
         let attr = fs::metadata(&abs_path)?;
 
         if !attr.is_dir() {
