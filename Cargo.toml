@@ -1,6 +1,6 @@
 [package]
 name = "Trail"
-version = "0.8.1"
+version = "0.8.5"
 edition = "2024"
 description = "A shared log of where you left off on each project, for you and your AI coding agents"
 license = "MIT"

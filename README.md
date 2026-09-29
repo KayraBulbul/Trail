@@ -56,6 +56,26 @@ The instructions tell the agent to never edit or delete updates. That stays in t
 
 If the folder isn't a Trail project yet, run `trail init` in it (or add it in the TUI).
 
+### Over MCP
+
+Agents that support [MCP](https://modelcontextprotocol.io) can use Trail as tools instead of shell commands. `trail mcp` runs the server; add it once and it works in every project:
+
+Claude Code:
+
+```sh
+claude mcp add --scope user trail -- trail mcp
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.trail]
+command = "trail"
+args = ["mcp"]
+```
+
+The agent gets four tools: `trail_status`, `trail_log`, `trail_add` and `trail_projects`. They work like the commands below and return the same JSON as `--json`. There are no tools to create projects or to edit or delete updates.
+
 ## Command line
 
 The commands below work from a project's folder (or any subfolder).
@@ -68,6 +88,7 @@ The commands below work from a project's folder (or any subfolder).
 | `trail projects` | List all projects |
 | `trail init [--name ...]` | Make the current folder a project (named after the folder by default) |
 | `trail agents` | Print instructions for AI agents |
+| `trail mcp` | Run an MCP server for AI agents (see above) |
 | `trail update` | Install the latest version |
 
 - `-p <name>` on `status`, `log` and `add` picks a project by name instead of by folder.
