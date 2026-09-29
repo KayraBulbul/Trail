@@ -127,3 +127,42 @@ fn modern_requests_need_a_supported_version_and_capabilities() {
     );
     assert_eq!(replies[1]["error"]["code"], -32602);
 }
+
+#[test]
+fn tools_list_and_call_work_in_both_eras() {
+    let replies = session(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"trail_projects"}}"#,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"trail_projects","arguments":{{}},{MODERN_META}}}}}"#
+        ),
+    ]);
+
+    assert_eq!(replies[1]["result"]["tools"], tools::definitions());
+    for reply in &replies[2..] {
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(reply["result"]["content"][0]["text"], "[]");
+        assert_eq!(reply["result"]["resultType"], "complete");
+    }
+}
+
+#[test]
+fn tool_failures_are_results_but_bad_calls_are_errors() {
+    let replies = session(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"trail_status"}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"trail_delete"}}"#,
+    ]);
+
+    assert_eq!(replies[1]["result"]["isError"], true);
+    assert_eq!(replies[2]["error"]["code"], -32602);
+    assert_eq!(replies[3]["error"]["code"], -32602);
+    assert!(
+        replies[3]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("trail_delete")
+    );
+}
