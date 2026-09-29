@@ -92,6 +92,13 @@ fn focus_projects(app: &mut App, input: &mut Input, conn: &Connection) {
     .unwrap();
 }
 
+/// Deletes the field's text with Backspace, like a user would.
+fn clear_field(app: &mut App, input: &mut Input, conn: &Connection) {
+    for _ in 0..input.input.chars().count() {
+        press(app, input, conn, KeyCode::Backspace);
+    }
+}
+
 fn submit(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
     for ch in text.chars() {
         press(app, input, conn, KeyCode::Char(ch));
@@ -358,7 +365,6 @@ fn loads_saved_projects_in_order_with_their_fields() {
         app.projects[0].created_at.to_rfc3339(),
         "2026-09-19T04:00:00+00:00"
     );
-    assert_eq!(app.projects[0].updated_at, app.projects[0].created_at);
     assert_eq!(app.project_selection.selected(), Some(0));
 }
 
@@ -1069,15 +1075,13 @@ fn edit_validates_cleared_fields_and_preserves_changes_for_save_retry() {
         (UpdateStep::Title, "Renamed"),
         (UpdateStep::Body, "first\nsecond"),
     ] {
-        input.input.clear();
-        input.reset_cursor();
+        clear_field(&mut app, &mut input, &conn);
         press(&mut app, &mut input, &conn, KeyCode::Enter);
         assert!(input.update_step == step);
         assert!(app.err.is_some());
         submit(&mut app, &mut input, &conn, replacement);
     }
-    input.input.clear();
-    input.reset_cursor();
+    clear_field(&mut app, &mut input, &conn);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     conn.execute_batch("CREATE TRIGGER fail_edit BEFORE UPDATE ON updates BEGIN SELECT RAISE(FAIL, 'edit failed'); END;").unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);

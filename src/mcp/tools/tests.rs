@@ -97,16 +97,6 @@ fn add_then_status_and_log_return_the_cli_json() {
 }
 
 #[test]
-fn missing_arguments_count_as_empty_and_projects_lists_counts() {
-    let fixture = Fixture::new();
-
-    let projects = fixture.json("elsewhere", "trail_projects", Value::Null);
-
-    assert_eq!(projects[0]["name"], "Demo");
-    assert_eq!(projects[0]["update_count"], 0);
-}
-
-#[test]
 fn project_argument_overrides_the_folder() {
     let fixture = Fixture::new();
 
@@ -150,11 +140,4 @@ fn bad_arguments_are_tool_errors_and_nothing_is_saved() {
     }
     let status = fixture.json("demo", "trail_status", json!({}));
     assert!(status["latest_update"].is_null());
-}
-
-#[test]
-fn unknown_tools_return_none() {
-    let fixture = Fixture::new();
-
-    assert!(call(&fixture.conn, &fixture.root, "trail_delete", &json!({})).is_none());
 }

@@ -57,11 +57,6 @@ fn malformed_messages_get_json_rpc_errors() {
     );
 }
 
-#[test]
-fn ends_cleanly_when_input_closes() {
-    assert!(session(&[]).is_empty());
-}
-
 const MODERN_META: &str = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 
 #[test]

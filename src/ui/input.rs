@@ -89,7 +89,7 @@ impl Input {
         new_cursor_pos.clamp(0, self.input.chars().count())
     }
 
-    pub const fn reset_cursor(&mut self) {
+    const fn reset_cursor(&mut self) {
         self.character_index = 0;
     }
 
