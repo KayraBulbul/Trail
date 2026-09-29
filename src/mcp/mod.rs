@@ -22,7 +22,6 @@ pub fn serve(
     input: impl BufRead,
     mut output: impl Write,
 ) -> io::Result<()> {
-    let _ = (conn, cwd);
     let mut initialized = false;
 
     for line in input.lines() {
@@ -97,6 +96,23 @@ pub fn serve(
                 send(&mut output, &result(id, reply))?;
             }
             "ping" => send(&mut output, &result(id, json!({})))?,
+            "tools/list" => send(
+                &mut output,
+                &result(id, json!({"tools": &tools::definitions()})),
+            )?,
+            "tools/call" => {
+                let Some(tool_name) = message["params"]["name"].as_str() else {
+                    send(&mut output, &error(id, -32602, "Missing tool name"))?;
+                    continue;
+                };
+                match tools::call(conn, cwd, tool_name, &message["params"]["arguments"]) {
+                    Some(tool_result) => send(&mut output, &result(id, tool_result))?,
+                    None => send(
+                        &mut output,
+                        &error(id, -32602, &format!("Unknown tool: {tool_name}")),
+                    )?,
+                }
+            }
             _ => send(&mut output, &error(id, -32601, "Method not found"))?,
         };
     }
