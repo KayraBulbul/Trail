@@ -195,3 +195,49 @@ fn agents_snippet_covers_the_session_workflow() {
         assert!(AGENTS_SNIPPET.contains(text), "missing {text}");
     }
 }
+
+#[test]
+fn projects_line_up_the_last_update_column() {
+    let (conn, folder) = (database(), Folder::new());
+    let sub = folder.0.join("sub");
+    trail(&conn, &folder.0, &["init", "--name", "One"], "").unwrap();
+    trail(&conn, &sub, &["init", "--name", "Two"], "").unwrap();
+    trail(
+        &conn,
+        &folder.0,
+        &["add", "--title", "T", "--body", "B"],
+        "",
+    )
+    .unwrap();
+    for _ in 0..2 {
+        trail(&conn, &sub, &["add", "--title", "T", "--body", "B"], "").unwrap();
+    }
+
+    let projects = trail(&conn, &folder.0, &["projects"], "").unwrap();
+
+    let columns: Vec<usize> = projects
+        .lines()
+        .map(|line| line.find("last update").unwrap())
+        .collect();
+    assert_eq!(columns.len(), 2, "{projects}");
+    assert_eq!(columns[0], columns[1], "{projects}");
+}
+
+#[test]
+fn zero_commits_since_is_left_out() {
+    let update = |commits_since| crate::core::status::UpdateInfo {
+        id: "1".to_string(),
+        title: "T".to_string(),
+        body: "B".to_string(),
+        next: "None".to_string(),
+        created_at: chrono::Utc::now(),
+        branch: Some("main".to_string()),
+        commit_sha: Some("94bd07e0".to_string()),
+        commits_since,
+    };
+
+    assert!(
+        output::log(&[update(Some(0))]).starts_with("T  (just now · written on main @ 94bd07e)\n")
+    );
+    assert!(output::log(&[update(Some(1))]).contains("@ 94bd07e · 1 commit since)"));
+}

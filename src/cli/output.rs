@@ -74,21 +74,26 @@ pub fn projects(projects: &[ProjectSummary]) -> String {
         .map(|project| tilde(&project.directory))
         .collect();
     let directory_width = column_width(directories.iter().map(String::as_str));
+    let updates: Vec<String> = projects
+        .iter()
+        .map(|project| plural(project.update_count, "update"))
+        .collect();
+    let updates_width = column_width(updates.iter().map(String::as_str));
 
     projects
         .iter()
-        .zip(&directories)
-        .map(|(project, directory)| {
+        .zip(directories.iter().zip(&updates))
+        .map(|(project, (directory, updates))| {
             let git = if project.is_git { "git" } else { "" };
-            let updates = plural(project.update_count, "update");
             let last = project
                 .last_update_at
                 .map(|time| format!("   last update {}", format::relative_time(time)))
                 .unwrap_or_default();
-            format!(
-                "{:<name_width$}   {directory:<directory_width$}   {git:<3}   {updates}{last}",
+            let line = format!(
+                "{:<name_width$}   {directory:<directory_width$}   {git:<3}   {updates:<updates_width$}{last}",
                 project.name
-            )
+            );
+            line.trim_end().to_string()
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -125,7 +130,7 @@ fn git_line(git: &GitStatus) -> String {
     parts.join(" · ")
 }
 
-/// `2d ago · written on main @ 94bd07e · 4 commits since`
+/// `2d ago · written on main @ 94bd07e · 4 commits since`. No commits since is left out.
 fn update_meta(update: &UpdateInfo) -> String {
     let mut parts = vec![format::relative_time(update.created_at)];
     if let Some(written_on) =
@@ -133,7 +138,7 @@ fn update_meta(update: &UpdateInfo) -> String {
     {
         parts.push(format!("written on {written_on}"));
     }
-    if let Some(count) = update.commits_since {
+    if let Some(count) = update.commits_since.filter(|&count| count > 0) {
         parts.push(format!("{} since", plural(count, "commit")));
     }
     parts.join(" · ")
