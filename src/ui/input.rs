@@ -3,8 +3,11 @@ use crate::types::{
     update::{Update, UpdateDraft, UpdateStep},
 };
 
+mod completion;
 mod projectform;
 mod updateform;
+
+pub use completion::Completion;
 
 pub struct Input {
     pub input: String,
@@ -15,6 +18,8 @@ pub struct Input {
     pub update: UpdateDraft,
     pub update_step: UpdateStep,
     pub editing_update: Option<Update>,
+    /// Folders listed by Tab in the directory field, cleared by any other key.
+    pub completion: Option<Completion>,
 }
 
 #[derive(PartialEq)]
@@ -44,6 +49,7 @@ impl Input {
             },
             update_step: UpdateStep::Title,
             editing_update: None,
+            completion: None,
         }
     }
 
@@ -96,6 +102,7 @@ impl Input {
     pub fn reset_all(&mut self) {
         self.input.clear();
         self.reset_cursor();
+        self.completion = None;
         self.reset_project();
         self.reset_update();
         self.project_step = ProjectStep::Name;

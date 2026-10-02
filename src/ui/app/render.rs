@@ -72,7 +72,14 @@ impl App {
             ),
             ProjectStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
-        self.render_input(frame, text_in, title, placeholder, false);
+        let help = match (&text_in.project_step, &text_in.completion) {
+            (ProjectStep::Directory, Some(_)) => {
+                "Tab/Shift+Tab: cycle | Right: accept | Enter: continue | Esc: cancel"
+            }
+            (ProjectStep::Directory, None) => "Tab: complete | Enter: continue | Esc: cancel",
+            _ => "Enter: continue | Esc: cancel",
+        };
+        self.render_input(frame, text_in, title, placeholder, help);
     }
 
     fn render_update_input(&self, frame: &mut Frame, text_in: &input::Input) {
@@ -82,13 +89,17 @@ impl App {
             UpdateStep::Next => ("What's Next?", "Optional: what will you work on next?"),
             UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
-        let multiline = matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next);
+        let help = if matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next) {
+            "Enter: continue | Esc: cancel | Shift+Enter: new line"
+        } else {
+            "Enter: continue | Esc: cancel"
+        };
         let title = if text_in.editing_update.is_some() {
             format!("Edit: {title}")
         } else {
             title.to_string()
         };
-        self.render_input(frame, text_in, &title, placeholder, multiline);
+        self.render_input(frame, text_in, &title, placeholder, help);
     }
 
     fn render_input(
@@ -97,7 +108,7 @@ impl App {
         text_in: &input::Input,
         title: &str,
         placeholder: &str,
-        multiline: bool,
+        help: &str,
     ) {
         let area = frame.area();
         let width = area.width.min(72);
@@ -115,29 +126,27 @@ impl App {
         } else {
             theme::TEXT
         };
-        let help = if multiline {
-            "Enter: continue | Esc: cancel | Shift+Enter: new line"
-        } else {
-            "Enter: continue | Esc: cancel"
-        };
         let help_lines = wrapped_input(help, usize::MAX, usize::from(width)).0;
         let error_height = u16::from(self.err.is_some());
-        let help_height = help_lines
-            .len()
-            .min(usize::from(area.height - 3 - error_height)) as u16;
+        let matches = text_in
+            .completion
+            .as_ref()
+            .map(|completion| completion_line(completion, usize::from(width)));
+        let matches_height = u16::from(matches.is_some());
+        let help_height = help_lines.len().min(usize::from(
+            (area.height - 3).saturating_sub(error_height + matches_height),
+        )) as u16;
+        let below_height = matches_height + help_height + error_height;
         let help = Paragraph::new(Text::from(
             help_lines.into_iter().map(Line::from).collect::<Vec<_>>(),
         ))
         .style(theme::SECONDARY)
         .centered();
-        let height = (lines.len() + 2).min(usize::from(
-            area.height.saturating_sub(help_height + error_height),
-        )) as u16;
+        let height =
+            (lines.len() + 2).min(usize::from(area.height.saturating_sub(below_height))) as u16;
         let input_area = Rect::new(
             area.x + (area.width - width) / 2,
-            area.y
-                + ((area.height - height) / 2)
-                    .min(area.height - height - help_height - error_height),
+            area.y + ((area.height - height) / 2).min(area.height - height - below_height),
             width,
             height,
         );
@@ -158,16 +167,27 @@ impl App {
             ),
             input_area,
         );
+        if let Some(matches) = matches {
+            frame.render_widget(
+                Paragraph::new(matches),
+                Rect::new(input_area.x, input_area.bottom(), width, matches_height),
+            );
+        }
         frame.render_widget(
             help,
-            Rect::new(input_area.x, input_area.bottom(), width, help_height),
+            Rect::new(
+                input_area.x,
+                input_area.bottom() + matches_height,
+                width,
+                help_height,
+            ),
         );
         if let Some(error) = &self.err {
             frame.render_widget(
                 Paragraph::new(error.as_str()).fg(theme::ERROR).centered(),
                 Rect::new(
                     input_area.x,
-                    input_area.bottom() + help_height,
+                    input_area.bottom() + matches_height + help_height,
                     width,
                     error_height,
                 ),
@@ -893,6 +913,62 @@ fn diff_line(line: &str) -> Line<'static> {
         };
     // Tabs have no cell width, so expand them before wrapping.
     Line::from(line.replace('\t', "    ")).style(style)
+}
+
+/// The folders Tab matched, as many as fit in `width`, showing the page that
+/// holds the selected one.
+fn completion_line(completion: &input::Completion, width: usize) -> Line<'static> {
+    let names: Vec<String> = completion
+        .matches
+        .iter()
+        .map(|name| format!("{name}/"))
+        .collect();
+    let mut start = 0;
+    loop {
+        let more = if start > 0 { "… " } else { "" };
+        let mut used = Span::raw(more).width();
+        let mut end = start;
+        while end < names.len() {
+            let rest = names.len() - end - 1;
+            let suffix = if rest > 0 {
+                format!("  +{rest} more").len()
+            } else {
+                0
+            };
+            let cell = Span::raw(names[end].as_str()).width() + if end > start { 2 } else { 0 };
+            if end > start && used + cell + suffix > width {
+                break;
+            }
+            used += cell;
+            end += 1;
+        }
+        let selected_shown = completion.selected.is_none_or(|i| i < end);
+        if selected_shown || end >= names.len() {
+            let mut spans = Vec::new();
+            if start > 0 {
+                spans.push(Span::styled("… ", theme::SECONDARY));
+            }
+            for (i, name) in names.iter().enumerate().take(end).skip(start) {
+                if i > start {
+                    spans.push(Span::raw("  "));
+                }
+                let style = if completion.selected == Some(i) {
+                    theme::CELL
+                } else {
+                    theme::SECONDARY
+                };
+                spans.push(Span::styled(name.clone(), style));
+            }
+            if end < names.len() {
+                spans.push(Span::styled(
+                    format!("  +{} more", names.len() - end),
+                    theme::SECONDARY,
+                ));
+            }
+            return Line::from(spans);
+        }
+        start = end;
+    }
 }
 
 // Wrap text and locate the cursor together so both use the same terminal cell widths.

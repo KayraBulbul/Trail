@@ -49,24 +49,7 @@ impl Input {
             io::Error::new(io::ErrorKind::InvalidInput, "Please enter a directory.")
         })?;
 
-        let path = if directory == "~" || directory.starts_with("~/") {
-            let home = env::home_dir().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "Could not determine your home directory.",
-                )
-            })?;
-
-            if directory == "~" {
-                home
-            } else {
-                home.join(&directory[2..])
-            }
-        } else {
-            PathBuf::from(directory)
-        };
-
-        let abs_path = dunce::canonicalize(path)?;
+        let abs_path = dunce::canonicalize(expand_home(directory)?)?;
         let attr = fs::metadata(&abs_path)?;
 
         if !attr.is_dir() {
@@ -89,4 +72,22 @@ impl Input {
             .iter()
             .any(|project| project.name.eq_ignore_ascii_case(name)))
     }
+}
+
+/// Replaces a leading `~` or `~/` with the home directory.
+pub(super) fn expand_home(directory: &str) -> io::Result<PathBuf> {
+    if directory != "~" && !directory.starts_with("~/") {
+        return Ok(PathBuf::from(directory));
+    }
+    let home = env::home_dir().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "Could not determine your home directory.",
+        )
+    })?;
+    Ok(if directory == "~" {
+        home
+    } else {
+        home.join(&directory[2..])
+    })
 }

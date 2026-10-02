@@ -99,10 +99,14 @@ fn clear_field(app: &mut App, input: &mut Input, conn: &Connection) {
     }
 }
 
-fn submit(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
+fn type_text(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
     for ch in text.chars() {
         press(app, input, conn, KeyCode::Char(ch));
     }
+}
+
+fn submit(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
+    type_text(app, input, conn, text);
     press(app, input, conn, KeyCode::Enter);
 }
 
@@ -133,6 +137,60 @@ fn directory_supplies_an_automatic_name() {
     assert_eq!(input.project.directory, Some(canonical(&trail_directory)));
     assert!(input.project_step == ProjectStep::Confirm);
     assert!(app.err.is_none());
+}
+
+#[test]
+fn tab_completes_the_only_matching_folder_and_it_can_be_saved() {
+    let temp_dir = TestDirectory::new();
+    let alpha = temp_dir.create_project_directory("alpha");
+    temp_dir.create_project_directory(".alhidden");
+    fs::write(temp_dir.0.join("alfile"), "").unwrap();
+    let sep = std::path::MAIN_SEPARATOR;
+    let (mut app, mut input, conn) = setup();
+    submit(&mut app, &mut input, &conn, "");
+    type_text(
+        &mut app,
+        &mut input,
+        &conn,
+        &format!("{}{sep}al", temp_dir.0.display()),
+    );
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+
+    assert_eq!(input.input, format!("{alpha}{sep}"));
+    assert!(input.completion.is_none());
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(input.project.directory, Some(canonical(&alpha)));
+    assert!(input.project_step == ProjectStep::Confirm);
+}
+
+#[test]
+fn tab_lists_several_matches_and_cycles_until_another_key_accepts() {
+    let temp_dir = TestDirectory::new();
+    let project_a = temp_dir.create_project_directory("project-a");
+    temp_dir.create_project_directory("project-b");
+    fs::create_dir(temp_dir.0.join("project-a").join("src")).unwrap();
+    let sep = std::path::MAIN_SEPARATOR;
+    let root = temp_dir.0.display().to_string();
+    let (mut app, mut input, conn) = setup();
+    submit(&mut app, &mut input, &conn, "");
+    type_text(&mut app, &mut input, &conn, &format!("{root}{sep}pro"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+    assert_eq!(input.input, format!("{root}{sep}project-"));
+    let listed = &input.completion.as_ref().unwrap().matches;
+    assert_eq!(listed, &["project-a", "project-b"]);
+
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+    assert_eq!(input.input, format!("{root}{sep}project-b{sep}"));
+    press(&mut app, &mut input, &conn, KeyCode::BackTab);
+    assert_eq!(input.input, format!("{project_a}{sep}"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Right);
+    assert!(input.completion.is_none());
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+    assert_eq!(input.input, format!("{project_a}{sep}src{sep}"));
 }
 
 #[test]
