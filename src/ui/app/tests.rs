@@ -194,6 +194,29 @@ fn tab_lists_several_matches_and_cycles_until_another_key_accepts() {
 }
 
 #[test]
+fn tab_matching_follows_the_platform_case_rules() {
+    let temp_dir = TestDirectory::new();
+    temp_dir.create_project_directory("Docs");
+    let docker = temp_dir.create_project_directory("docker");
+    let sep = std::path::MAIN_SEPARATOR;
+    let root = temp_dir.0.display().to_string();
+    let (mut app, mut input, conn) = setup();
+    submit(&mut app, &mut input, &conn, "");
+    type_text(&mut app, &mut input, &conn, &format!("{root}{sep}do"));
+    press(&mut app, &mut input, &conn, KeyCode::Tab);
+
+    if cfg!(any(windows, target_os = "macos")) {
+        // Case-insensitive file systems: both match, and the shared prefix
+        // takes the first folder's capitalization without losing what was typed.
+        assert_eq!(input.input, format!("{root}{sep}Doc"));
+        let listed = &input.completion.as_ref().unwrap().matches;
+        assert_eq!(listed, &["Docs", "docker"]);
+    } else {
+        assert_eq!(input.input, format!("{docker}{sep}"));
+    }
+}
+
+#[test]
 fn relative_directory_is_saved_as_an_absolute_path() {
     let (mut app, mut input, conn) = setup();
     submit(&mut app, &mut input, &conn, "Here");
