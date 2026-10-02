@@ -3,7 +3,7 @@ use crate::{
     types::{project::ProjectStep, update::UpdateStep},
     ui::input::{Input, InputMode},
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::{fs, path::PathBuf};
 
 struct TestDirectory(PathBuf);
@@ -63,6 +63,7 @@ fn setup() -> (App, Input, Connection) {
             pending_update_delete_id: None,
             focused_pane: BrowserPane::Projects,
             git: GitState::default(),
+            clicks: Vec::new(),
             err: None,
             exit: false,
         },
@@ -1468,4 +1469,137 @@ fn new_updates_record_branch_and_commit_and_edits_keep_them() {
     let edited = sqlite::get_update(&conn, &saved.id).unwrap();
     assert_eq!(edited.title, "Progress edited");
     assert_eq!(edited.commit_sha.as_deref(), Some(first.as_str()));
+}
+
+const SCREEN: (u16, u16) = (120, 24);
+
+/// Draws a frame and returns the cell where `text` first appears.
+fn find_on_screen(app: &mut App, input: &mut Input, text: &str) -> (u16, u16) {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(SCREEN.0, SCREEN.1)).unwrap();
+    terminal.draw(|frame| app.render(frame, input)).unwrap();
+    let buffer = terminal.backend().buffer();
+    for y in 0..SCREEN.1 {
+        let row: String = (0..SCREEN.0).map(|x| buffer[(x, y)].symbol()).collect();
+        if let Some(index) = row.find(text) {
+            return (row[..index].chars().count() as u16, y);
+        }
+    }
+    panic!("{text:?} is not on screen");
+}
+
+fn mouse(
+    app: &mut App,
+    input: &mut Input,
+    conn: &Connection,
+    kind: MouseEventKind,
+    at: (u16, u16),
+) {
+    let event = MouseEvent {
+        kind,
+        column: at.0,
+        row: at.1,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.handle_mouse_event(event, input, conn).unwrap();
+}
+
+/// Left-clicks the first place `text` appears on screen.
+fn click(app: &mut App, input: &mut Input, conn: &Connection, text: &str) {
+    let at = find_on_screen(app, input, text);
+    mouse(
+        app,
+        input,
+        conn,
+        MouseEventKind::Down(MouseButton::Left),
+        at,
+    );
+}
+
+#[test]
+fn clicking_a_project_opens_it_and_clicking_a_pane_focuses_it() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+
+    click(&mut app, &mut input, &conn, "Beta");
+    assert_eq!(app.opened_project_id.as_deref(), Some("b"));
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+
+    click(&mut app, &mut input, &conn, "Projects");
+    assert!(app.focused_pane == BrowserPane::Projects);
+}
+
+#[test]
+fn clicking_a_hint_presses_its_key_but_multi_key_hints_do_nothing() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+
+    click(&mut app, &mut input, &conn, "(j/k) select");
+    assert_eq!(app.project_selection.selected(), Some(0));
+
+    click(&mut app, &mut input, &conn, "(A) new");
+    assert!(app.show_project_input);
+    click(&mut app, &mut input, &conn, "Esc: cancel");
+    assert!(!app.show_project_input);
+}
+
+#[test]
+fn popup_keys_are_clickable_and_the_screen_behind_it_is_not() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+
+    click(&mut app, &mut input, &conn, "Beta");
+    assert_eq!(app.opened_project_id.as_deref(), Some("a"));
+    click(&mut app, &mut input, &conn, "Esc");
+    assert!(app.pending_project_delete_id.is_none());
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    click(&mut app, &mut input, &conn, "Enter");
+    assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 1);
+}
+
+#[test]
+fn clicking_an_update_row_selects_it_and_clicking_again_opens_it() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+
+    click(&mut app, &mut input, &conn, "Older body");
+    assert_eq!(app.update_selection.selected(), Some(1));
+    assert!(app.show_update_table);
+
+    click(&mut app, &mut input, &conn, "Older body");
+    assert!(!app.show_update_table);
+    assert_eq!(app.opened_update_id.as_deref(), Some("older"));
+}
+
+#[test]
+fn scrolling_over_a_pane_focuses_and_scrolls_it() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].body = "line\n".repeat(100);
+    focus_projects(&mut app, &mut input, &conn);
+
+    let at = find_on_screen(&mut app, &mut input, "Title: Latest");
+    mouse(&mut app, &mut input, &conn, MouseEventKind::ScrollDown, at);
+
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+    assert_eq!(app.detail_scroll, 1);
+}
+
+#[test]
+fn clicking_a_branch_then_a_commit_opens_its_diff() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    commit(&dir, "b.txt", "b\n", "second");
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+
+    click(&mut app, &mut input, &conn, "* main");
+    assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
+
+    click(&mut app, &mut input, &conn, " first");
+    assert!(app.git.focused_pane == GitPane::Diff);
+    assert!(app.git.diff_title.ends_with("first"));
 }
