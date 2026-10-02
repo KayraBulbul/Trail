@@ -102,6 +102,9 @@ impl App {
             }
 
             if self.show_project_input && text_in.input_mode == InputMode::Editing {
+                if !matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
+                    text_in.completion = None;
+                }
                 match key_event.code {
                     KeyCode::Enter if text_in.project_step == ProjectStep::Name => {
                         text_in.submit_name();
@@ -157,6 +160,12 @@ impl App {
                         self.err = None;
                         text_in.input_mode = InputMode::Normal;
                         self.show_project_input = false;
+                    }
+                    KeyCode::Tab if text_in.project_step == ProjectStep::Directory => {
+                        text_in.complete_directory(false);
+                    }
+                    KeyCode::BackTab if text_in.project_step == ProjectStep::Directory => {
+                        text_in.complete_directory(true);
                     }
                     key if matches!(
                         text_in.project_step,
