@@ -16,6 +16,7 @@ impl App {
         conn: &Connection,
     ) -> io::Result<()> {
         if key_event.kind == KeyEventKind::Press {
+            self.update_click = None;
             if self.pending_project_delete_id.is_some() {
                 match key_event.code {
                     KeyCode::Enter => {

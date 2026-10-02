@@ -67,6 +67,7 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         focused_pane: BrowserPane::Projects,
         git: GitState::default(),
         clicks: Vec::new(),
+        update_click: None,
         err: None,
         exit: false,
     };

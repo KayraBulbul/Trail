@@ -101,6 +101,9 @@ pub struct App {
     pub git: GitState,
     /// Clickable areas of the last drawn frame, topmost last.
     pub clicks: Vec<(Rect, Click)>,
+    /// The update table row the last click selected. Clicking it again opens it;
+    /// any key clears it, so a single click never opens a row.
+    pub update_click: Option<usize>,
     pub err: Option<String>,
     pub exit: bool,
 }

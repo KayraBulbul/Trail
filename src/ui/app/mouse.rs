@@ -15,6 +15,7 @@ pub enum Click {
     /// A key hint, or a key word in a prompt: clicking presses the key.
     Key(KeyEvent),
     /// A pane: clicking or scrolling over it first presses the key that focuses it.
+    /// Screens with panes only scroll the pane under the cursor.
     Focus(KeyEvent),
     Project(usize),
     Update(usize),
@@ -47,10 +48,11 @@ impl App {
                     self.press(KeyCode::Enter, text_in, conn)?;
                 }
                 Some(Click::Update(index)) => {
-                    if self.update_selection.selected() == Some(index) {
+                    if self.update_click == Some(index) {
                         self.press(KeyCode::Enter, text_in, conn)?;
                     } else {
                         self.update_selection.select(Some(index));
+                        self.update_click = Some(index);
                     }
                 }
                 Some(Click::GitItem(index)) => {
@@ -65,8 +67,15 @@ impl App {
                     Click::Focus(key) => Some(key),
                     _ => None,
                 });
-                if let Some(key) = focus {
-                    self.handle_key_event(key, text_in, conn)?;
+                let has_panes = self
+                    .clicks
+                    .iter()
+                    .any(|(_, click)| matches!(click, Click::Focus(_)));
+                match focus {
+                    Some(key) => self.handle_key_event(key, text_in, conn)?,
+                    // On a screen with panes, scroll only the one under the cursor.
+                    None if has_panes => return Ok(()),
+                    None => {}
                 }
                 let code = if mouse.kind == MouseEventKind::ScrollDown {
                     KeyCode::Down

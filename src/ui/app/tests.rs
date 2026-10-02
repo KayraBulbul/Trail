@@ -64,6 +64,7 @@ fn setup() -> (App, Input, Connection) {
             focused_pane: BrowserPane::Projects,
             git: GitState::default(),
             clicks: Vec::new(),
+            update_click: None,
             err: None,
             exit: false,
         },
@@ -1562,9 +1563,13 @@ fn popup_keys_are_clickable_and_the_screen_behind_it_is_not() {
 }
 
 #[test]
-fn clicking_an_update_row_selects_it_and_clicking_again_opens_it() {
+fn clicking_an_update_row_selects_it_and_only_a_second_click_opens_it() {
     let (mut app, mut input, conn) = browser_with_updates();
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+
+    // The first row starts out selected, but one click still only selects it.
+    click(&mut app, &mut input, &conn, "Latest body");
+    assert!(app.show_update_table);
 
     click(&mut app, &mut input, &conn, "Older body");
     assert_eq!(app.update_selection.selected(), Some(1));
@@ -1602,4 +1607,49 @@ fn clicking_a_branch_then_a_commit_opens_its_diff() {
     click(&mut app, &mut input, &conn, " first");
     assert!(app.git.focused_pane == GitPane::Diff);
     assert!(app.git.diff_title.ends_with("first"));
+}
+
+#[test]
+fn clicking_prompt_keys_in_the_latest_update_pane_does_what_they_say() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+    let first = app.projects[0].id.clone();
+
+    let (x, y) = find_on_screen(&mut app, &mut input, "press Enter");
+    mouse(
+        &mut app,
+        &mut input,
+        &conn,
+        MouseEventKind::Down(MouseButton::Left),
+        (x + 6, y),
+    );
+    assert_eq!(app.opened_project_id, Some(first));
+
+    let (x, y) = find_on_screen(&mut app, &mut input, "Press a");
+    mouse(
+        &mut app,
+        &mut input,
+        &conn,
+        MouseEventKind::Down(MouseButton::Left),
+        (x + 6, y),
+    );
+    assert!(app.show_update_input);
+}
+
+#[test]
+fn scrolling_over_the_git_diff_pane_before_a_diff_leaves_the_list_alone() {
+    let temp_dir = TestDirectory::new();
+    let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
+    commit(&dir, "a.txt", "a\n", "first");
+    git(&dir, &["branch", "feature"]);
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    let selected = app.git.branch_selection.selected();
+
+    let at = find_on_screen(&mut app, &mut input, "Choose a branch");
+    for kind in [MouseEventKind::ScrollDown, MouseEventKind::ScrollUp] {
+        mouse(&mut app, &mut input, &conn, kind, at);
+        assert_eq!(app.git.branch_selection.selected(), selected);
+    }
+    assert!(app.git.focused_pane == GitPane::List);
 }

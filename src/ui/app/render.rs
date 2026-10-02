@@ -426,11 +426,14 @@ impl App {
             frame.render_widget(block, latest_update_area);
             render_scrolled(frame, text, inner, &mut self.detail_scroll);
         } else {
+            let inner = latest_update_area.inner(Margin::new(1, 1));
             if self.opened_project_id.is_none() {
-                let (msg, style) = (
-                    vec!["Select a project and press ".into(), "Enter".bold()],
-                    Style::default(),
-                );
+                let prompt = "Select a project and press ";
+                if let Some(index) = self.project_selection.selected() {
+                    let x = inner.x + Span::raw(prompt).width() as u16;
+                    self.add_click(Rect::new(x, inner.y, 5, 1), inner, Click::Project(index));
+                }
+                let (msg, style) = (vec![prompt.into(), "Enter".bold()], Style::default());
                 let text = Text::from(Line::from(msg)).patch_style(style);
                 let project_message = Paragraph::new(text).style(theme::SECONDARY).block(
                     Block::bordered().border_style(theme::border(
@@ -448,7 +451,11 @@ impl App {
                     Style::default(),
                 );
 
-                let text = Text::from(Line::from(msg)).patch_style(style);
+                let line = Line::from(msg);
+                if line.width() <= usize::from(inner.width) {
+                    self.record_bold_keys(&line, inner);
+                }
+                let text = Text::from(line).patch_style(style);
                 let mut block =
                     Block::bordered()
                         .title("Latest Update")
@@ -528,7 +535,9 @@ impl App {
             Constraint::Percentage(80),
         ]));
         self.add_click(list_area, list_area, Click::Focus(ctrl('h')));
-        self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
+        if self.git.diff.is_some() {
+            self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
+        }
 
         let list_focused = self.git.focused_pane == GitPane::List;
         if let Some(branch) = &self.git.opened_branch {
