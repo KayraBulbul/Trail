@@ -3,7 +3,10 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use crossterm::{
-    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
 };
 use ratatui::widgets::{ListState, TableState};
@@ -63,6 +66,8 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         pending_update_delete_id: None,
         focused_pane: BrowserPane::Projects,
         git: GitState::default(),
+        clicks: Vec::new(),
+        update_click: None,
         err: None,
         exit: false,
     };
@@ -78,7 +83,9 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )?;
     }
+    execute!(std::io::stdout(), EnableMouseCapture)?;
     let app_result = app.run(&mut terminal, &conn);
+    execute!(std::io::stdout(), DisableMouseCapture)?;
 
     if supports_keyboard_enhancement {
         execute!(std::io::stdout(), PopKeyboardEnhancementFlags)?;

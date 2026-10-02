@@ -44,6 +44,10 @@ The Latest Update pane always shows the newest update. Press `u` to see all of t
 | `?` | Help |
 | `q` | Quit |
 
+You can also use the mouse. Click a project (or a branch or commit in the git view) to open it, click a pane to focus it, and scroll to move through whatever is under the cursor. Every key shown in the help row at the bottom, and in prompts and popups, can be clicked instead of pressed. In the update table, the first click selects a row and the second opens it.
+
+Mouse support captures clicks, so to select text in the terminal, hold `Shift` while dragging (`Option` on macOS in some terminals).
+
 ## Using Trail with AI agents
 
 Agents forget everything between sessions. Add Trail's instructions to your project's `AGENTS.md` or `CLAUDE.md`, and the agent will check `trail status` when it starts and record an update when it finishes:

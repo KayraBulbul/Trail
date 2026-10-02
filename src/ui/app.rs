@@ -13,6 +13,7 @@ use crate::{
 use crossterm::event::Event;
 use ratatui::{
     DefaultTerminal,
+    layout::Rect,
     widgets::{ListState, TableState},
 };
 use rusqlite::{Connection, Result};
@@ -25,7 +26,10 @@ use std::{
 };
 
 mod keybindings;
+mod mouse;
 mod render;
+
+pub use mouse::Click;
 
 #[cfg(test)]
 mod tests;
@@ -95,6 +99,11 @@ pub struct App {
     pub pending_update_delete_id: Option<String>,
     pub focused_pane: BrowserPane,
     pub git: GitState,
+    /// Clickable areas of the last drawn frame, topmost last.
+    pub clicks: Vec<(Rect, Click)>,
+    /// The update table row the last click selected. Clicking it again opens it;
+    /// any key clears it, so a single click never opens a row.
+    pub update_click: Option<usize>,
     pub err: Option<String>,
     pub exit: bool,
 }
@@ -117,10 +126,16 @@ impl App {
 
             terminal.draw(|frame| self.render(frame, &mut text_in))?;
 
-            if crossterm::event::poll(Duration::from_millis(250))?
-                && let Event::Key(key_event) = crossterm::event::read()?
-            {
-                self.handle_key_event(key_event, &mut text_in, conn)?;
+            if crossterm::event::poll(Duration::from_millis(250))? {
+                match crossterm::event::read()? {
+                    Event::Key(key_event) => {
+                        self.handle_key_event(key_event, &mut text_in, conn)?
+                    }
+                    Event::Mouse(mouse_event) => {
+                        self.handle_mouse_event(mouse_event, &mut text_in, conn)?
+                    }
+                    _ => {}
+                }
             }
         }
 
