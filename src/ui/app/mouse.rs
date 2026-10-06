@@ -192,7 +192,6 @@ fn parse_key(label: &str) -> Option<KeyEvent> {
         "Enter" => KeyCode::Enter,
         "Esc" => KeyCode::Esc,
         "Backspace" => KeyCode::Backspace,
-        "F1" => KeyCode::F(1),
         "Tab" => KeyCode::Tab,
         "Left" => KeyCode::Left,
         "Right" => KeyCode::Right,

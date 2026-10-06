@@ -152,11 +152,6 @@ impl App {
             && self.pending_update_delete_id.is_none()
     }
 
-    /// Help opened from a form, where `q` doesn't quit so a draft isn't lost.
-    fn help_over_form(&self) -> bool {
-        self.show_project_input || self.show_update_input
-    }
-
     fn start_update_edit(&mut self, conn: &Connection, text_in: &mut Input, id: &str) {
         match sqlite::get_update(conn, id) {
             Ok(update) => {

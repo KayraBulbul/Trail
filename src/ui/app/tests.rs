@@ -1235,18 +1235,16 @@ fn help_opens_from_any_page_and_backspace_returns_there() {
     press(&mut app, &mut input, &conn, KeyCode::Esc);
     press(&mut app, &mut input, &conn, KeyCode::Backspace);
 
-    // In a text field ? is typed, F1 opens help, and q doesn't quit and lose the draft.
+    // Forms take ? as text and never open help, from a field or the confirmation.
     press(&mut app, &mut input, &conn, KeyCode::Char('a'));
     type_text(&mut app, &mut input, &conn, "Why?");
-    assert!(!app.show_help);
-    press(&mut app, &mut input, &conn, KeyCode::F(1));
-    press(&mut app, &mut input, &conn, KeyCode::Char('q'));
-    assert!(app.show_help);
-    assert!(!app.exit);
-    press(&mut app, &mut input, &conn, KeyCode::Backspace);
-    assert!(!app.show_help);
-    assert!(app.show_update_input);
     assert_eq!(input.input, "Why?");
+    for field in ["", "body", ""] {
+        submit(&mut app, &mut input, &conn, field);
+    }
+    assert!(input.update_step == UpdateStep::Confirm);
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(!app.show_help);
 }
 
 #[test]

@@ -19,13 +19,10 @@ impl App {
             self.update_click = None;
             // Help opens over whatever is on screen, so closing it returns there.
             if self.show_help {
-                let over_form = self.help_over_form();
                 let scroll = &mut self.help_scroll;
                 match key_event.code {
-                    KeyCode::Backspace | KeyCode::Char('?') | KeyCode::F(1) => {
-                        self.show_help = false
-                    }
-                    KeyCode::Char('q') if !over_form => self.exit = true,
+                    KeyCode::Backspace | KeyCode::Char('?') => self.show_help = false,
+                    KeyCode::Char('q') => self.exit = true,
                     KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
                     KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
                     KeyCode::PageDown => *scroll = scroll.saturating_add(10),
@@ -36,18 +33,10 @@ impl App {
                 }
                 return Ok(());
             }
-            // ? types a ? into text fields, so F1 opens help there.
-            let typing = (self.show_project_input
-                && matches!(
-                    text_in.project_step,
-                    ProjectStep::Name | ProjectStep::Directory
-                ))
-                || (self.show_update_input
-                    && matches!(
-                        text_in.update_step,
-                        UpdateStep::Title | UpdateStep::Body | UpdateStep::Next
-                    ));
-            if key_event.code == KeyCode::F(1) || (key_event.code == KeyCode::Char('?') && !typing)
+            // Help is for browsing pages; forms take ? as text.
+            if key_event.code == KeyCode::Char('?')
+                && !self.show_project_input
+                && !self.show_update_input
             {
                 self.help_scroll = 0;
                 self.show_help = true;

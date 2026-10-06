@@ -43,7 +43,7 @@ The Latest Update pane always shows the newest update. Press `u` to see all of t
 | `d` | Delete the selected project or update |
 | `j` / `k` | Move or scroll |
 | `Ctrl+h` / `Ctrl+l` | Focus Projects / Latest Update |
-| `?` | Help, from any page (`F1` while typing in a field). `Backspace` closes it |
+| `?` | Help, from any page except the project and update forms. `Backspace` closes it |
 | `q` | Quit |
 
 You can also use the mouse. Click a project (or a branch or commit in the git view) to open it, click a pane to focus it, and scroll to move through whatever is under the cursor. Every key shown in the help row at the bottom, and in prompts and popups, can be clicked instead of pressed. In the update table, the first click selects a row and the second opens it.

@@ -78,12 +78,10 @@ impl App {
         };
         let help = match (&text_in.project_step, &text_in.completion) {
             (ProjectStep::Directory, Some(_)) => {
-                "(Tab/Shift+Tab) cycle | (Right) accept | (Enter) continue | (Esc) cancel | (F1) help"
+                "(Tab/Shift+Tab) cycle | (Right) accept | (Enter) continue | (Esc) cancel"
             }
-            (ProjectStep::Directory, None) => {
-                "(Tab) complete | (Enter) continue | (Esc) cancel | (F1) help"
-            }
-            _ => "(Enter) continue | (Esc) cancel | (F1) help",
+            (ProjectStep::Directory, None) => "(Tab) complete | (Enter) continue | (Esc) cancel",
+            _ => "(Enter) continue | (Esc) cancel",
         };
         self.render_input(frame, text_in, title, placeholder, help);
     }
@@ -96,9 +94,9 @@ impl App {
             UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
         let help = if matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next) {
-            "(Enter) continue | (Shift+Enter) new line | (Esc) cancel | (F1) help"
+            "(Enter) continue | (Shift+Enter) new line | (Esc) cancel"
         } else {
-            "(Enter) continue | (Esc) cancel | (F1) help"
+            "(Enter) continue | (Esc) cancel"
         };
         let title = if text_in.editing_update.is_some() {
             format!("Edit: {title}")
@@ -174,8 +172,7 @@ impl App {
     }
 
     fn render_project_confirmation(&mut self, frame: &mut Frame, text_in: &input::Input) {
-        let area =
-            self.render_bottom_rows(frame, "(Enter) create project | (Esc) cancel | (?) help");
+        let area = self.render_bottom_rows(frame, "(Enter) create project | (Esc) cancel");
         let [box_area, _] = area.layout(&Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(0),
@@ -206,12 +203,12 @@ impl App {
         let (title, hints) = if text_in.editing_update.is_some() {
             (
                 "Edit Update",
-                "(Enter) save changes | (j/k) scroll | (Esc) cancel | (?) help",
+                "(Enter) save changes | (j/k) scroll | (Esc) cancel",
             )
         } else {
             (
                 "New Update",
-                "(Enter) save update | (j/k) scroll | (Esc) cancel | (?) help",
+                "(Enter) save update | (j/k) scroll | (Esc) cancel",
             )
         };
         let area = self.render_bottom_rows(frame, hints);
@@ -868,19 +865,17 @@ impl App {
             Line::from("Scroll: scroll or move the selection in the pane under the cursor"),
             Line::from(""),
             Line::from("Help").style(theme::HEADING),
-            Line::from("?: open help from any page (F1 while typing in a field)"),
+            Line::from("?: open help from any page except the project and update forms"),
             Line::from("j/k or Up/Down: scroll"),
             Line::from("PgUp/PgDn, Home/End: scroll details, confirmation, diff or help"),
             Line::from("g / G: top / end"),
             Line::from("Backspace / ?: close, back to where you opened it"),
             Line::from("q: quit"),
         ]);
-        let hints = if self.help_over_form() {
-            "(j/k) scroll | (g/G) top/end | (Backspace) close"
-        } else {
-            "(j/k) scroll | (g/G) top/end | (Backspace) close | (q) quit"
-        };
-        let window_area = self.render_bottom_rows(frame, hints);
+        let window_area = self.render_bottom_rows(
+            frame,
+            "(j/k) scroll | (g/G) top/end | (Backspace) close | (q) quit",
+        );
         let block = Block::bordered()
             .title("Trail keybindings")
             .border_style(theme::border(true));
