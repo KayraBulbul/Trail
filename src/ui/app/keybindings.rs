@@ -274,7 +274,7 @@ impl App {
                 }
             } else if self.show_update_table {
                 match key_event.code {
-                    KeyCode::Esc => self.show_update_table = false,
+                    KeyCode::Backspace => self.show_update_table = false,
                     KeyCode::Char('q') => self.exit = true,
                     KeyCode::Char('j') | KeyCode::Down if !self.updates.is_empty() => {
                         let index = match self.update_selection.selected() {
@@ -334,7 +334,7 @@ impl App {
             } else if self.show_git_view {
                 match key_event.code {
                     // Step back: diff -> commits -> branches -> close
-                    KeyCode::Esc => {
+                    KeyCode::Backspace => {
                         if self.git.focused_pane == GitPane::Diff {
                             self.git.focused_pane = GitPane::List;
                         } else if self.git.opened_branch.is_some() && !self.git.branches.is_empty()
@@ -430,7 +430,7 @@ impl App {
                 }
             } else if self.show_help {
                 match key_event.code {
-                    KeyCode::Esc | KeyCode::Char('?') => self.show_help = false,
+                    KeyCode::Backspace | KeyCode::Char('?') => self.show_help = false,
                     KeyCode::Char('q') => self.exit = true,
                     _ => {}
                 }

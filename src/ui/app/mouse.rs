@@ -191,6 +191,7 @@ fn parse_key(label: &str) -> Option<KeyEvent> {
     let code = match key {
         "Enter" => KeyCode::Enter,
         "Esc" => KeyCode::Esc,
+        "Backspace" => KeyCode::Backspace,
         "Tab" => KeyCode::Tab,
         "Left" => KeyCode::Left,
         "Right" => KeyCode::Right,

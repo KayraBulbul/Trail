@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 const TABLE_HINTS: &str =
-    "(Enter) open | (j/k) select | (e) edit | (d) delete | (Esc) back | (q) quit";
+    "(Enter) open | (j/k) select | (e) edit | (d) delete | (Backspace) back | (q) quit";
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame, text_in: &mut input::Input) {
@@ -406,9 +406,11 @@ impl App {
     fn render_git_view(&mut self, frame: &mut Frame) {
         let help = match self.git.focused_pane {
             GitPane::List => {
-                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Esc) back | (q) quit"
+                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Backspace) back | (q) quit"
             }
-            GitPane::Diff => "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Esc) back | (q) quit",
+            GitPane::Diff => {
+                "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Backspace) back | (q) quit"
+            }
         };
         let content_area = self.render_bottom_rows(frame, help);
 
@@ -825,7 +827,7 @@ impl App {
             Line::from("Enter: open selected update"),
             Line::from("d: delete selected update"),
             Line::from("e: edit selected update"),
-            Line::from("Esc: return"),
+            Line::from("Backspace: back"),
             Line::from("q: quit"),
             Line::from(""),
             Line::from("Git view").style(theme::HEADING),
@@ -837,7 +839,7 @@ impl App {
             Line::from("Ctrl+h: focus list"),
             Line::from("Ctrl+l: focus diff"),
             Line::from("r: refresh"),
-            Line::from("Esc: back (diff, commits, branches, close)"),
+            Line::from("Backspace: back (diff, commits, branches, close)"),
             Line::from("q: quit"),
             Line::from(""),
             Line::from("Project and update forms").style(theme::HEADING),
@@ -864,12 +866,12 @@ impl App {
             Line::from("j/k or Up/Down: scroll"),
             Line::from("PgUp/PgDn, Home/End: scroll details, confirmation, diff or help"),
             Line::from("g / G: top / end"),
-            Line::from("Esc / ?: return"),
+            Line::from("Backspace / ?: close"),
             Line::from("q: quit"),
         ]);
         let window_area = self.render_bottom_rows(
             frame,
-            "(j/k) scroll | (g/G) top/end | (Esc) close | (q) quit",
+            "(j/k) scroll | (g/G) top/end | (Backspace) close | (q) quit",
         );
         let block = Block::bordered()
             .title("Trail keybindings")

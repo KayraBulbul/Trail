@@ -904,7 +904,7 @@ fn browser_focus_stays_on_visible_panes() {
     press(&mut app, &mut input, &conn, KeyCode::Char('j'));
     assert_eq!(app.update_selection.selected(), selected);
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.focused_pane == BrowserPane::LatestUpdate);
     for _ in 0..2 {
         focus_projects(&mut app, &mut input, &conn);
@@ -931,7 +931,7 @@ fn help_blocks_browser_actions_until_closed() {
     assert!(!app.show_update_table);
     assert!(app.pending_project_delete_id.is_none());
     assert_eq!(app.project_selection.selected(), Some(0));
-    for close in [KeyCode::Esc, KeyCode::Char('?')] {
+    for close in [KeyCode::Backspace, KeyCode::Char('?')] {
         app.show_help = true;
         press(&mut app, &mut input, &conn, close);
         assert!(!app.show_help);
@@ -1217,16 +1217,16 @@ fn help_is_visible_without_projects_and_its_contents_are_reachable() {
     press(&mut app, &mut input, &conn, KeyCode::Char('?'));
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Trail keybindings"));
     press(&mut app, &mut input, &conn, KeyCode::End);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
     press(&mut app, &mut input, &conn, KeyCode::Down);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
     press(&mut app, &mut input, &conn, KeyCode::Char('G'));
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
     press(&mut app, &mut input, &conn, KeyCode::Char('g'));
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     press(&mut app, &mut input, &conn, KeyCode::Char('A'));
     assert!(app.show_project_input);
 }
@@ -1402,12 +1402,12 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     assert!(text.contains("second"));
     assert!(text.contains("+second line"));
 
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.git.focused_pane == GitPane::List);
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.git.opened_branch.is_none());
     assert_eq!(app.git.branch_selection.selected(), Some(selected));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(!app.show_git_view);
     assert!(!app.exit);
 }
@@ -1427,8 +1427,8 @@ fn git_view_without_commits_shows_uncommitted_changes() {
     assert!(text.contains("Untracked:"));
     assert!(text.contains("new.txt"));
 
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(!app.show_git_view);
 }
 
@@ -1569,12 +1569,12 @@ fn clicking_a_hint_presses_its_key_but_multi_key_hints_do_nothing() {
     assert!(!app.show_project_input);
 
     press(&mut app, &mut input, &conn, KeyCode::Char('?'));
-    click(&mut app, &mut input, &conn, "(Esc) close");
+    click(&mut app, &mut input, &conn, "(Backspace) close");
     assert!(!app.show_help);
 
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    click(&mut app, &mut input, &conn, "(Esc) back");
+    click(&mut app, &mut input, &conn, "(Backspace) back");
     assert!(!app.show_update_table);
 }
 
