@@ -1230,7 +1230,7 @@ fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
         press(&mut app, &mut input, &conn, KeyCode::PageDown);
         assert!(rendered_text(&mut app, &mut input, width, height).contains("NEXT_STEP"));
         press(&mut app, &mut input, &conn, KeyCode::Home);
-        assert!(rendered_text(&mut app, &mut input, width, height).contains("Title: Latest"));
+        assert!(rendered_text(&mut app, &mut input, width, height).contains("│ Latest "));
     }
     press(&mut app, &mut input, &conn, KeyCode::Char('j'));
     assert!(app.detail_scroll > 0);
@@ -1451,7 +1451,7 @@ fn new_updates_record_branch_and_commit_and_edits_keep_them() {
     assert_eq!(saved.branch.as_deref(), Some("main"));
     assert_eq!(saved.commit_sha.as_deref(), Some(first.as_str()));
     let text = rendered_text(&mut app, &mut input, 160, 24);
-    assert!(text.contains(&format!("Written on: main @ {}", &first[..7])));
+    assert!(text.contains(&format!("written on main @ {}", &first[..7])));
 
     commit(&dir, "b.txt", "b\n", "second");
     press(&mut app, &mut input, &conn, KeyCode::Char('e'));
@@ -1611,7 +1611,7 @@ fn scrolling_over_a_pane_focuses_and_scrolls_it() {
     app.updates[0].body = "line\n".repeat(100);
     focus_projects(&mut app, &mut input, &conn);
 
-    let at = find_on_screen(&mut app, &mut input, "Title: Latest");
+    let at = find_on_screen(&mut app, &mut input, "Latest Update");
     mouse(&mut app, &mut input, &conn, MouseEventKind::ScrollDown, at);
 
     assert!(app.focused_pane == BrowserPane::LatestUpdate);

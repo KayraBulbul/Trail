@@ -2,17 +2,21 @@ use super::{App, BrowserPane, Click, GitEntry, GitPane, mouse::ctrl};
 use crate::{
     format,
     git::repo::Head,
-    types::{project::ProjectStep, update::UpdateStep},
+    types::{
+        project::ProjectStep,
+        update::{Update, UpdateStep},
+    },
     ui::{input, theme},
 };
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Position, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap,
+        Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Scrollbar, ScrollbarState,
+        Table, Wrap,
     },
 };
 
@@ -401,38 +405,17 @@ impl App {
 
         let git_summary = self.git_summary_line();
         if let Some(update) = self.displayed_update() {
-            let created_at_local_time = update.created_at.with_timezone(&Local);
-            let updated_at_local_time = update.updated_at.with_timezone(&Local);
-
-            let created_at_display = created_at_local_time.format("%d %b %Y, %H:%M").to_string();
-            let updated_at_display = updated_at_local_time.format("%d %b %Y, %H:%M").to_string();
-
-            let created_at_msg = vec!["Created at: ".into(), created_at_display.bold()];
-            let updated_at_msg = vec!["Updated at: ".into(), updated_at_display.bold()];
-
-            let mut text = Text::from(format!(
-                "Title: {}\nBody: {}\nWhat to do next: {}",
-                update.title, update.body, update.next,
-            ));
-            text.lines.extend([
-                Line::from(created_at_msg).style(theme::SECONDARY),
-                Line::from(updated_at_msg).style(theme::SECONDARY),
-            ]);
-            if let Some(written_on) =
-                format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
-            {
-                text.lines.push(
-                    Line::from(vec!["Written on: ".into(), written_on.bold()])
-                        .style(theme::SECONDARY),
-                );
-            }
-
-            let mut block =
-                Block::bordered()
-                    .title(update.title.as_str())
-                    .border_style(theme::border(
-                        self.focused_pane == BrowserPane::LatestUpdate,
-                    ));
+            let is_latest = self
+                .updates
+                .first()
+                .is_some_and(|latest| latest.id == update.id);
+            let text = update_text(update);
+            let mut block = Block::bordered()
+                .title(if is_latest { "Latest Update" } else { "Update" })
+                .padding(Padding::horizontal(1))
+                .border_style(theme::border(
+                    self.focused_pane == BrowserPane::LatestUpdate,
+                ));
             if let Some(git_summary) = git_summary {
                 block = block.title_top(git_summary);
             }
@@ -1019,6 +1002,34 @@ fn wrap_hints(text: &str, width: u16) -> Vec<String> {
         }
     }
     lines
+}
+
+/// An update as people read it: title, when and where it was written, the
+/// body, and what to do next.
+fn update_text(update: &Update) -> Text<'static> {
+    let date = |time: DateTime<Utc>| {
+        let local = time.with_timezone(&Local).format("%d %b %Y, %H:%M");
+        format!("{} ({local})", format::relative_time(time))
+    };
+    let mut written = vec![date(update.created_at)];
+    if update.updated_at > update.created_at {
+        written.push(format!("edited {}", date(update.updated_at)));
+    }
+    if let Some(written_on) =
+        format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
+    {
+        written.push(format!("written on {written_on}"));
+    }
+
+    let mut lines = vec![
+        Line::from(update.title.clone()).style(Style::new().fg(theme::BRIGHT).bold()),
+        Line::from(written.join(" · ")).style(theme::SECONDARY),
+        Line::from(""),
+    ];
+    lines.extend(update.body.lines().map(|line| Line::from(line.to_string())));
+    lines.extend([Line::from(""), Line::from("Next").style(theme::HEADING)]);
+    lines.extend(update.next.lines().map(|line| Line::from(line.to_string())));
+    Text::from(lines)
 }
 
 fn diff_line(line: &str) -> Line<'static> {

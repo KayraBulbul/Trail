@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 pub const BACKGROUND: Color = Color::Rgb(0x19, 0x19, 0x1D);
 pub const TEXT: Color = Color::Rgb(0xC5, 0xBD, 0xB6);
+pub const BRIGHT: Color = Color::Rgb(0xDD, 0xD3, 0xC9);
 pub const MUTED: Color = Color::Rgb(0x89, 0x81, 0x81);
 pub const BORDER: Color = Color::Rgb(0x3C, 0x3A, 0x41);
 pub const ACCENT: Color = Color::Rgb(0xC6, 0x5D, 0x2E);
