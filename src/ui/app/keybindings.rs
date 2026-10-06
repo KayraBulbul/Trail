@@ -67,6 +67,7 @@ impl App {
                 return Ok(());
             }
 
+            let mut g_scrolls = true;
             let scroll = if self.show_help {
                 Some(&mut self.help_scroll)
             } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
@@ -82,6 +83,7 @@ impl App {
                 && !self.show_update_table
                 && self.focused_pane == BrowserPane::LatestUpdate
             {
+                g_scrolls = false;
                 Some(&mut self.detail_scroll)
             } else {
                 None
@@ -93,7 +95,8 @@ impl App {
                     KeyCode::PageDown => Some(scroll.saturating_add(10)),
                     KeyCode::PageUp => Some(scroll.saturating_sub(10)),
                     KeyCode::Home => Some(0),
-                    KeyCode::End => Some(u16::MAX),
+                    KeyCode::Char('g') if g_scrolls => Some(0),
+                    KeyCode::End | KeyCode::Char('G') => Some(u16::MAX),
                     _ => None,
                 };
                 if let Some(next) = next {
@@ -288,6 +291,12 @@ impl App {
                             .saturating_sub(1);
                         self.update_selection.select(Some(index));
                     }
+                    KeyCode::Char('g') if !self.updates.is_empty() => {
+                        self.update_selection.select(Some(0));
+                    }
+                    KeyCode::Char('G') if !self.updates.is_empty() => {
+                        self.update_selection.select(Some(self.updates.len() - 1));
+                    }
                     KeyCode::Enter => {
                         if let Some(update) = self
                             .update_selection
@@ -373,6 +382,13 @@ impl App {
                             selection.select(Some(index));
                         }
                     }
+                    // Top / bottom of branches / commits
+                    KeyCode::Char(key @ ('g' | 'G')) if self.git.focused_pane == GitPane::List => {
+                        let (selection, len) = self.git_list_selection();
+                        if len > 0 {
+                            selection.select(Some(if key == 'g' { 0 } else { len - 1 }));
+                        }
+                    }
                     // Open branch commits
                     KeyCode::Enter
                         if self.git.focused_pane == GitPane::List
@@ -450,6 +466,18 @@ impl App {
                             None => 0,
                         };
 
+                        self.project_selection.select(Some(index));
+                    }
+                    // Top / bottom of projects list
+                    KeyCode::Char(key @ ('g' | 'G'))
+                        if self.focused_pane == BrowserPane::Projects
+                            && !self.projects.is_empty() =>
+                    {
+                        let index = if key == 'g' {
+                            0
+                        } else {
+                            self.projects.len() - 1
+                        };
                         self.project_selection.select(Some(index));
                     }
                     // Open updates table

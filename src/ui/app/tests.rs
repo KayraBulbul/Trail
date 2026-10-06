@@ -410,6 +410,8 @@ fn browser_navigation_stops_at_list_boundaries() {
         (KeyCode::Up, 0),
         (KeyCode::Char('j'), 1),
         (KeyCode::Char('k'), 0),
+        (KeyCode::Char('G'), 1),
+        (KeyCode::Char('g'), 0),
     ] {
         press(&mut app, &mut input, &conn, key);
         assert_eq!(app.project_selection.selected(), Some(expected));
@@ -846,6 +848,8 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
         (KeyCode::Down, 1),
         (KeyCode::Char('k'), 0),
         (KeyCode::Char('j'), 1),
+        (KeyCode::Char('g'), 0),
+        (KeyCode::Char('G'), 1),
     ] {
         press(&mut app, &mut input, &conn, key);
         assert_eq!(app.update_selection.selected(), Some(expected));
@@ -1204,6 +1208,10 @@ fn help_is_visible_without_projects_and_its_contents_are_reachable() {
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
     press(&mut app, &mut input, &conn, KeyCode::Esc);
     press(&mut app, &mut input, &conn, KeyCode::Char('A'));
     assert!(app.show_project_input);
@@ -1337,6 +1345,16 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     git(&dir, &["branch", "feature"]);
     fs::write(dir.join("a.txt"), "changed\n").unwrap();
 
+    // g opens the git view only from the Latest Update pane; on Projects it goes to the top.
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(!app.show_git_view);
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+        &mut input,
+        &conn,
+    )
+    .unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Char('g'));
     assert!(app.show_git_view);
     let selected = app.git.branch_selection.selected().unwrap();
@@ -1350,6 +1368,10 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
     assert!(matches!(app.git.entries[0], GitEntry::Uncommitted));
     assert_eq!(app.git.entries.len(), 3);
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert_eq!(app.git.entry_selection.selected(), Some(2));
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert_eq!(app.git.entry_selection.selected(), Some(0));
 
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
