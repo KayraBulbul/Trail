@@ -52,6 +52,8 @@ fn setup() -> (App, Input, Connection) {
             show_help: false,
             help_scroll: 0,
             detail_scroll: 0,
+            table_pane: TablePane::default(),
+            preview_scroll: 0,
             confirmation_scroll: 0,
             projects: Vec::new(),
             updates: Vec::new(),
@@ -869,6 +871,35 @@ fn update_table_previews_the_selected_update() {
     let text = rendered_text(&mut app, &mut input, 120, 24);
     assert!(text.contains("Preview"));
     assert!(text.contains("OLDER_SECOND_LINE"));
+}
+
+#[test]
+fn ctrl_j_focuses_the_preview_to_scroll_it_and_ctrl_k_returns_to_the_table() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].body = format!("{}PREVIEW_END", "line\n".repeat(40));
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    assert!(!rendered_text(&mut app, &mut input, 120, 24).contains("PREVIEW_END"));
+
+    app.handle_key_event(ctrl('j'), &mut input, &conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert!(rendered_text(&mut app, &mut input, 120, 24).contains("PREVIEW_END"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert_eq!(app.update_selection.selected(), Some(0));
+
+    // Back on the table, j moves the selection and the next preview starts at the top.
+    app.handle_key_event(ctrl('k'), &mut input, &conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert_eq!(app.update_selection.selected(), Some(1));
+    assert_eq!(app.preview_scroll, 0);
+
+    // Scrolling over the preview focuses and scrolls it.
+    press(&mut app, &mut input, &conn, KeyCode::Char('k'));
+    let at = find_on_screen(&mut app, &mut input, "Preview");
+    mouse(&mut app, &mut input, &conn, MouseEventKind::ScrollDown, at);
+    assert!(app.table_pane == TablePane::Preview);
+    assert_eq!(app.preview_scroll, 1);
+    assert_eq!(app.update_selection.selected(), Some(0));
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use super::{App, BrowserPane, GitPane};
+use super::{App, BrowserPane, GitPane, TablePane};
 use crate::ui::input;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -48,10 +48,11 @@ impl App {
                     self.press(KeyCode::Enter, text_in, conn)?;
                 }
                 Some(Click::Update(index)) => {
+                    self.table_pane = TablePane::Updates;
                     if self.update_click == Some(index) {
                         self.press(KeyCode::Enter, text_in, conn)?;
                     } else {
-                        self.update_selection.select(Some(index));
+                        self.select_update(index);
                         self.update_click = Some(index);
                     }
                 }

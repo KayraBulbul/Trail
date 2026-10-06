@@ -43,6 +43,7 @@ The Latest Update pane always shows the newest update. Press `u` to see all of t
 | `d` | Delete the selected project or update |
 | `j` / `k` | Move or scroll |
 | `Ctrl+h` / `Ctrl+l` | Focus Projects / Latest Update |
+| `Ctrl+j` / `Ctrl+k` | In the update table, focus the Preview to scroll it / go back to the table |
 | `?` | Help, from any page except the project and update forms. `Backspace` closes it |
 | `q` | Quit |
 

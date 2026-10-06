@@ -1,4 +1,4 @@
-use super::{App, BrowserPane, DiffSource, GitEntry, GitPane};
+use super::{App, BrowserPane, DiffSource, GitEntry, GitPane, TablePane};
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
     ui::input::{self, InputMode},
@@ -94,8 +94,12 @@ impl App {
             }
 
             let mut g_scrolls = true;
-            let scroll = if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
+            let scroll = if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                None
+            } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
                 Some(&mut self.confirmation_scroll)
+            } else if self.show_update_table && self.table_pane == TablePane::Preview {
+                Some(&mut self.preview_scroll)
             } else if self.show_git_view {
                 if self.git.focused_pane == GitPane::Diff {
                     Some(&mut self.git.diff_scroll)
@@ -300,12 +304,20 @@ impl App {
                 match key_event.code {
                     KeyCode::Backspace => self.show_update_table = false,
                     KeyCode::Char('q') => self.exit = true,
+                    // Focus preview
+                    KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.table_pane = TablePane::Preview;
+                    }
+                    // Focus table
+                    KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.table_pane = TablePane::Updates;
+                    }
                     KeyCode::Char('j') | KeyCode::Down if !self.updates.is_empty() => {
                         let index = match self.update_selection.selected() {
                             Some(index) => index.saturating_add(1).min(self.updates.len() - 1),
                             None => 0,
                         };
-                        self.update_selection.select(Some(index));
+                        self.select_update(index);
                     }
                     KeyCode::Char('k') | KeyCode::Up if !self.updates.is_empty() => {
                         let index = self
@@ -313,13 +325,11 @@ impl App {
                             .selected()
                             .unwrap_or(0)
                             .saturating_sub(1);
-                        self.update_selection.select(Some(index));
+                        self.select_update(index);
                     }
-                    KeyCode::Char('g') if !self.updates.is_empty() => {
-                        self.update_selection.select(Some(0));
-                    }
+                    KeyCode::Char('g') if !self.updates.is_empty() => self.select_update(0),
                     KeyCode::Char('G') if !self.updates.is_empty() => {
-                        self.update_selection.select(Some(self.updates.len() - 1));
+                        self.select_update(self.updates.len() - 1);
                     }
                     KeyCode::Enter => {
                         if let Some(update) = self
@@ -501,6 +511,8 @@ impl App {
                     // Open updates table
                     KeyCode::Char('u') if !self.opened_project_id.is_none() => {
                         self.show_update_table = true;
+                        self.table_pane = TablePane::Updates;
+                        self.preview_scroll = 0;
                     }
                     // Open git view
                     KeyCode::Char('g') if self.opened_git_directory().is_some() => {

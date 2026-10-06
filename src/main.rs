@@ -55,6 +55,8 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         show_help: false,
         help_scroll: 0,
         detail_scroll: 0,
+        table_pane: ui::app::TablePane::default(),
+        preview_scroll: 0,
         confirmation_scroll: 0,
         projects: Vec::new(),
         updates: Vec::new(),

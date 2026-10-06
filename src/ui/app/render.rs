@@ -1,4 +1,4 @@
-use super::{App, BrowserPane, Click, GitEntry, GitPane, mouse::ctrl};
+use super::{App, BrowserPane, Click, GitEntry, GitPane, TablePane, mouse::ctrl};
 use crate::{
     format,
     git::repo::Head,
@@ -20,8 +20,8 @@ use ratatui::{
     },
 };
 
-const TABLE_HINTS: &str =
-    "(Enter) open | (j/k) select | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
+const TABLE_HINTS: &str = "(Enter) open | (j/k) select | (Ctrl+j) preview | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
+const PREVIEW_HINTS: &str = "(Enter) open | (j/k) scroll | (Ctrl+k) table | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame, text_in: &mut input::Input) {
@@ -59,7 +59,11 @@ impl App {
         } else if self.show_git_view {
             self.render_git_view(frame);
         } else if self.show_update_table {
-            let area = self.render_bottom_rows(frame, TABLE_HINTS);
+            let hints = match self.table_pane {
+                TablePane::Updates => TABLE_HINTS,
+                TablePane::Preview => PREVIEW_HINTS,
+            };
+            let area = self.render_bottom_rows(frame, hints);
             self.render_table(frame, area);
         } else {
             self.render_browser(frame);
@@ -692,17 +696,22 @@ impl App {
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+        // The focused section gets the room: the preview takes most of it while it's being read.
+        let preview_focused = self.table_pane == TablePane::Preview;
+        let table_share = if preview_focused { 30 } else { 50 };
         let [table_area, preview_area] = area.layout(&Layout::vertical([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
+            Constraint::Percentage(table_share),
+            Constraint::Percentage(100 - table_share),
         ]));
+        self.add_click(table_area, table_area, Click::Focus(ctrl('k')));
+        self.add_click(preview_area, preview_area, Click::Focus(ctrl('j')));
         let table_block = Block::bordered()
             .title("Updates")
-            .border_style(theme::border(true));
+            .border_style(theme::border(!preview_focused));
         let preview_block = Block::bordered()
             .title("Preview")
             .padding(Padding::horizontal(1))
-            .border_style(theme::border(false));
+            .border_style(theme::border(preview_focused));
         let table_inner = table_block.inner(table_area);
         let preview_inner = preview_block.inner(preview_area);
         frame.render_widget(table_block, table_area);
@@ -779,7 +788,12 @@ impl App {
             .selected()
             .and_then(|index| self.updates.get(index))
         {
-            render_scrolled(frame, update_text(update), preview_inner, &mut 0);
+            render_scrolled(
+                frame,
+                update_text(update),
+                preview_inner,
+                &mut self.preview_scroll,
+            );
         }
 
         let [_, scrollbar_area] = scrollbar_area.layout(&Layout::vertical([
@@ -826,6 +840,8 @@ impl App {
             Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
             Line::from("g / G: first / last update"),
+            Line::from("Ctrl+j: focus Preview (j/k then scroll it)"),
+            Line::from("Ctrl+k: focus Updates"),
             Line::from("Enter: open selected update"),
             Line::from("d: delete selected update"),
             Line::from("e: edit selected update"),
