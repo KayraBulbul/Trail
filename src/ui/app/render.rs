@@ -521,6 +521,8 @@ impl App {
         }
 
         let list_focused = self.git.focused_pane == GitPane::List;
+        // Room for a row at the widest the list gets: half the screen, less the "> " marker and borders.
+        let max_row_width = usize::from(content_area.width / 2).saturating_sub(4);
         let (title, items, selection) = if let Some(branch) = &self.git.opened_branch {
             let entries: Vec<ListItem<'_>> =
                 self.git
@@ -529,15 +531,21 @@ impl App {
                     .map(|entry| match entry {
                         GitEntry::Uncommitted => ListItem::new("Uncommitted changes")
                             .style(Style::new().fg(theme::ACCENT)),
-                        GitEntry::Commit(commit) => ListItem::new(Line::from(vec![
-                            Span::styled(commit.short_sha.as_str(), theme::SECONDARY),
-                            " ".into(),
-                            commit.subject.as_str().into(),
-                            Span::styled(
-                                format!(" · {}", format::relative_time(commit.time)),
-                                theme::SECONDARY,
-                            ),
-                        ])),
+                        GitEntry::Commit(commit) => {
+                            // Shorten the subject rather than lose the age off the end.
+                            let age = format!(" · {}", format::relative_time(commit.time));
+                            let subject_width = max_row_width.saturating_sub(
+                                Span::raw(commit.short_sha.as_str()).width()
+                                    + 1
+                                    + Span::raw(age.as_str()).width(),
+                            );
+                            ListItem::new(Line::from(vec![
+                                Span::styled(commit.short_sha.as_str(), theme::SECONDARY),
+                                " ".into(),
+                                truncate(&commit.subject, subject_width).into(),
+                                Span::styled(age, theme::SECONDARY),
+                            ]))
+                        }
                     })
                     .collect();
             (
@@ -853,6 +861,7 @@ impl App {
             ],
         )
         .header(header)
+        .column_spacing(2)
         .row_highlight_style(theme::ROW)
         .highlight_symbol("> ")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
@@ -1003,6 +1012,26 @@ impl App {
     }
 }
 
+/// Shortens `text` to `width` cells, ending in `…` when it's cut. Text that
+/// fits, or a `width` too small to hold anything but `…`, leaves it whole.
+fn truncate(text: &str, width: usize) -> String {
+    if width < 2 || Span::raw(text).width() <= width {
+        return text.to_string();
+    }
+    let mut shortened = String::new();
+    let mut used = 0;
+    for grapheme in Span::raw(text).styled_graphemes(Style::default()) {
+        let cell_width = Span::raw(grapheme.symbol).width();
+        if used + cell_width + 1 > width {
+            break;
+        }
+        shortened.push_str(grapheme.symbol);
+        used += cell_width;
+    }
+    shortened.push('…');
+    shortened
+}
+
 /// Splits a ` | `-separated help row into lines that fit in `width`, breaking
 /// only between hints. A hint wider than `width` gets a line of its own.
 fn wrap_hints(text: &str, width: u16) -> Vec<String> {
@@ -1061,7 +1090,7 @@ fn diff_line(line: &str) -> Line<'static> {
         } else if line.starts_with('-') {
             Style::new().fg(theme::REMOVED)
         } else {
-            Style::default()
+            theme::SECONDARY
         };
     // Tabs have no cell width, so expand them before wrapping.
     Line::from(line.replace('\t', "    ")).style(style)
