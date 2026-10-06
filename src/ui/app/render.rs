@@ -16,8 +16,8 @@ use ratatui::{
     },
 };
 
-const INFO_TEXT: [&str; 1] =
-    ["(Esc) return | (Enter) open | (j/k) row | (d) delete | (e) edit | (q) quit"];
+const INFO_TEXT: &str =
+    "(Esc) return | (Enter) open | (j/k) row | (d) delete | (e) edit | (q) quit";
 const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
@@ -53,11 +53,18 @@ impl App {
         } else if self.show_git_view {
             self.render_git_view(frame);
         } else if self.show_update_table {
-            let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
+            let footer_lines = match &self.err {
+                Some(error) => vec![error.clone()],
+                None => wrap_hints(INFO_TEXT, frame.area().width.saturating_sub(2)),
+            };
+            let layout = Layout::vertical([
+                Constraint::Min(5),
+                Constraint::Length(footer_lines.len() as u16 + 2),
+            ]);
             let rects = frame.area().layout_vec(&layout);
 
             self.render_table(frame, rects[0]);
-            self.render_footer(frame, rects[1]);
+            self.render_footer(frame, &footer_lines, rects[1]);
         } else {
             self.render_browser(frame);
         }
@@ -127,8 +134,7 @@ impl App {
         } else {
             theme::TEXT
         };
-        let hints = help;
-        let help_lines = wrapped_input(help, usize::MAX, usize::from(width)).0;
+        let help_lines = wrap_hints(help, width);
         let error_height = u16::from(self.err.is_some());
         let matches = text_in
             .completion
@@ -139,12 +145,6 @@ impl App {
             (area.height - 3).saturating_sub(error_height + matches_height),
         )) as u16;
         let below_height = matches_height + help_height + error_height;
-        let help_lines_count = help_lines.len();
-        let help = Paragraph::new(Text::from(
-            help_lines.into_iter().map(Line::from).collect::<Vec<_>>(),
-        ))
-        .style(theme::SECONDARY)
-        .centered();
         let height =
             (lines.len() + 2).min(usize::from(area.height.saturating_sub(below_height))) as u16;
         let input_area = Rect::new(
@@ -182,10 +182,12 @@ impl App {
             width,
             help_height,
         );
-        frame.render_widget(help, help_area);
-        if help_height == 1 && help_lines_count == 1 {
-            self.record_hints(hints, help_area, true);
-        }
+        self.render_hints(
+            frame,
+            &help_lines[..usize::from(help_height)],
+            help_area,
+            true,
+        );
         if let Some(error) = &self.err {
             frame.render_widget(
                 Paragraph::new(error.as_str()).fg(theme::ERROR).centered(),
@@ -323,11 +325,23 @@ impl App {
 
     fn render_browser(&mut self, frame: &mut Frame) {
         let error_height = if self.err.is_some() { 1 } else { 0 };
+        let help = match self.focused_pane {
+            BrowserPane::Projects => {
+                "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
+            }
+            BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
+                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+            }
+            BrowserPane::LatestUpdate => {
+                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+            }
+        };
+        let help_lines = wrap_hints(help, frame.area().width);
 
         let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(error_height),
-            Constraint::Length(1),
+            Constraint::Length(help_lines.len() as u16),
         ]));
 
         if let Some(error) = &self.err {
@@ -473,20 +487,7 @@ impl App {
             }
         }
 
-        let help = match self.focused_pane {
-            BrowserPane::Projects => {
-                "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
-            }
-            BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
-                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
-            }
-            BrowserPane::LatestUpdate => {
-                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
-            }
-        };
-        let help_message = Paragraph::new(help).style(theme::SECONDARY);
-        frame.render_widget(help_message, help_area);
-        self.record_hints(help, help_area, false);
+        self.render_hints(frame, &help_lines, help_area, false);
     }
 
     fn git_summary_line(&self) -> Option<Line<'static>> {
@@ -517,11 +518,18 @@ impl App {
 
     fn render_git_view(&mut self, frame: &mut Frame) {
         let error_height = if self.err.is_some() { 1 } else { 0 };
+        let help = match self.git.focused_pane {
+            GitPane::List => {
+                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Esc) back | (q) quit"
+            }
+            GitPane::Diff => "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Esc) back | (q) quit",
+        };
+        let help_lines = wrap_hints(help, frame.area().width);
 
         let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(error_height),
-            Constraint::Length(1),
+            Constraint::Length(help_lines.len() as u16),
         ]));
 
         if let Some(error) = &self.err {
@@ -670,15 +678,24 @@ impl App {
             frame.render_widget(diff_message, diff_area);
         }
 
-        let help = match self.git.focused_pane {
-            GitPane::List => {
-                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Esc) back | (q) quit"
-            }
-            GitPane::Diff => "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Esc) back | (q) quit",
-        };
-        let help_message = Paragraph::new(help).style(theme::SECONDARY);
-        frame.render_widget(help_message, help_area);
-        self.record_hints(help, help_area, false);
+        self.render_hints(frame, &help_lines, help_area, false);
+    }
+
+    /// Draws help row lines from `wrap_hints`, one per row of `area`, and makes their keys clickable.
+    fn render_hints(&mut self, frame: &mut Frame, lines: &[String], area: Rect, centered: bool) {
+        for (row, line) in lines.iter().enumerate().take(usize::from(area.height)) {
+            let row_area = Rect::new(area.x, area.y + row as u16, area.width, 1);
+            let paragraph = Paragraph::new(line.as_str()).style(theme::SECONDARY);
+            frame.render_widget(
+                if centered {
+                    paragraph.centered()
+                } else {
+                    paragraph
+                },
+                row_area,
+            );
+            self.record_hints(line, row_area, centered);
+        }
     }
 
     fn render_delete_confirmation(&mut self, frame: &mut Frame) {
@@ -878,19 +895,19 @@ impl App {
         );
     }
 
-    fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
-        let info_footer = Paragraph::new(self.err.as_deref().unwrap_or(INFO_TEXT[0]))
-            .style(if self.err.is_some() {
-                Style::new().fg(theme::ERROR)
-            } else {
-                theme::SECONDARY
-            })
-            .centered()
-            .block(Block::bordered().border_style(theme::border(false)));
-
-        frame.render_widget(info_footer, area);
-        if self.err.is_none() {
-            self.record_hints(INFO_TEXT[0], area.inner(Margin::new(1, 1)), true);
+    fn render_footer(&mut self, frame: &mut Frame, lines: &[String], area: Rect) {
+        let block = Block::bordered().border_style(theme::border(false));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if let Some(error) = &self.err {
+            frame.render_widget(
+                Paragraph::new(error.as_str())
+                    .style(Style::new().fg(theme::ERROR))
+                    .centered(),
+                inner,
+            );
+        } else {
+            self.render_hints(frame, lines, inner, true);
         }
     }
 
@@ -961,20 +978,41 @@ impl App {
             Line::from("Esc / ?: return"),
             Line::from("q: quit"),
         ]);
-        let title = "Trail keybindings | j/k: scroll | Esc: close";
-        let block = Block::bordered()
-            .title(title)
-            .border_style(theme::border(true));
-        let area = frame.area();
-        self.record_hints(
-            title,
-            Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1),
-            false,
+        let help_lines = wrap_hints(
+            "(j/k) scroll | (g/G) top/end | (Esc) close | (q) quit",
+            frame.area().width,
         );
-        let inner = block.inner(frame.area());
-        frame.render_widget(block, frame.area());
+        let [window_area, help_area] = frame.area().layout(&Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(help_lines.len() as u16),
+        ]));
+        let block = Block::bordered()
+            .title("Trail keybindings")
+            .border_style(theme::border(true));
+        let inner = block.inner(window_area);
+        frame.render_widget(block, window_area);
         render_scrolled(frame, help, inner, &mut self.help_scroll);
+        self.render_hints(frame, &help_lines, help_area, false);
     }
+}
+
+/// Splits a ` | `-separated help row into lines that fit in `width`, breaking
+/// only between hints. A hint wider than `width` gets a line of its own.
+fn wrap_hints(text: &str, width: u16) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for hint in text.split(" | ") {
+        match lines.last_mut() {
+            Some(line)
+                if Span::raw(line.as_str()).width() + 3 + Span::raw(hint).width()
+                    <= usize::from(width) =>
+            {
+                line.push_str(" | ");
+                line.push_str(hint);
+            }
+            _ => lines.push(hint.to_string()),
+        }
+    }
+    lines
 }
 
 fn diff_line(line: &str) -> Line<'static> {

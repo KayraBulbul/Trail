@@ -1468,12 +1468,21 @@ const SCREEN: (u16, u16) = (120, 24);
 
 /// Draws a frame and returns the cell where `text` first appears.
 fn find_on_screen(app: &mut App, input: &mut Input, text: &str) -> (u16, u16) {
+    find_on_screen_of_size(app, input, text, SCREEN)
+}
+
+fn find_on_screen_of_size(
+    app: &mut App,
+    input: &mut Input,
+    text: &str,
+    (width, height): (u16, u16),
+) -> (u16, u16) {
     let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(SCREEN.0, SCREEN.1)).unwrap();
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| app.render(frame, input)).unwrap();
     let buffer = terminal.backend().buffer();
-    for y in 0..SCREEN.1 {
-        let row: String = (0..SCREEN.0).map(|x| buffer[(x, y)].symbol()).collect();
+    for y in 0..height {
+        let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
         if let Some(index) = row.find(text) {
             return (row[..index].chars().count() as u16, y);
         }
@@ -1536,6 +1545,28 @@ fn clicking_a_hint_presses_its_key_but_multi_key_hints_do_nothing() {
     assert!(app.show_project_input);
     click(&mut app, &mut input, &conn, "Esc: cancel");
     assert!(!app.show_project_input);
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    click(&mut app, &mut input, &conn, "(Esc) close");
+    assert!(!app.show_help);
+}
+
+#[test]
+fn help_rows_wrap_on_narrow_screens_and_keep_every_hint_clickable() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+
+    let at = find_on_screen_of_size(&mut app, &mut input, "(q) quit", (40, 12));
+    mouse(
+        &mut app,
+        &mut input,
+        &conn,
+        MouseEventKind::Down(MouseButton::Left),
+        at,
+    );
+
+    assert!(app.exit);
 }
 
 #[test]
