@@ -1211,6 +1211,44 @@ fn rendered_text(app: &mut App, input: &mut Input, width: u16, height: u16) -> S
         .collect()
 }
 
+/// Opens help with `key`, then closes it with Backspace.
+fn open_and_close_help(app: &mut App, input: &mut Input, conn: &Connection, key: KeyCode) {
+    press(app, input, conn, key);
+    assert!(app.show_help);
+    assert!(rendered_text(app, input, 120, 24).contains("Trail keybindings"));
+    press(app, input, conn, KeyCode::Backspace);
+    assert!(!app.show_help);
+}
+
+#[test]
+fn help_opens_from_any_page_and_backspace_returns_there() {
+    let (mut app, mut input, conn) = browser_with_updates();
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    open_and_close_help(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(app.show_update_table);
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    open_and_close_help(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(app.pending_update_delete_id.is_some());
+    assert!(rendered_text(&mut app, &mut input, 120, 24).contains("Delete update?"));
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
+
+    // In a text field ? is typed, F1 opens help, and q doesn't quit and lose the draft.
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    type_text(&mut app, &mut input, &conn, "Why?");
+    assert!(!app.show_help);
+    press(&mut app, &mut input, &conn, KeyCode::F(1));
+    press(&mut app, &mut input, &conn, KeyCode::Char('q'));
+    assert!(app.show_help);
+    assert!(!app.exit);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
+    assert!(!app.show_help);
+    assert!(app.show_update_input);
+    assert_eq!(input.input, "Why?");
+}
+
 #[test]
 fn help_is_visible_without_projects_and_its_contents_are_reachable() {
     let (mut app, mut input, conn) = browser();

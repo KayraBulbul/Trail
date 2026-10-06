@@ -17,6 +17,43 @@ impl App {
     ) -> io::Result<()> {
         if key_event.kind == KeyEventKind::Press {
             self.update_click = None;
+            // Help opens over whatever is on screen, so closing it returns there.
+            if self.show_help {
+                let over_form = self.help_over_form();
+                let scroll = &mut self.help_scroll;
+                match key_event.code {
+                    KeyCode::Backspace | KeyCode::Char('?') | KeyCode::F(1) => {
+                        self.show_help = false
+                    }
+                    KeyCode::Char('q') if !over_form => self.exit = true,
+                    KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+                    KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+                    KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+                    KeyCode::Home | KeyCode::Char('g') => *scroll = 0,
+                    KeyCode::End | KeyCode::Char('G') => *scroll = u16::MAX,
+                    _ => {}
+                }
+                return Ok(());
+            }
+            // ? types a ? into text fields, so F1 opens help there.
+            let typing = (self.show_project_input
+                && matches!(
+                    text_in.project_step,
+                    ProjectStep::Name | ProjectStep::Directory
+                ))
+                || (self.show_update_input
+                    && matches!(
+                        text_in.update_step,
+                        UpdateStep::Title | UpdateStep::Body | UpdateStep::Next
+                    ));
+            if key_event.code == KeyCode::F(1) || (key_event.code == KeyCode::Char('?') && !typing)
+            {
+                self.help_scroll = 0;
+                self.show_help = true;
+                return Ok(());
+            }
+
             if self.pending_project_delete_id.is_some() {
                 match key_event.code {
                     KeyCode::Enter => {
@@ -68,9 +105,7 @@ impl App {
             }
 
             let mut g_scrolls = true;
-            let scroll = if self.show_help {
-                Some(&mut self.help_scroll)
-            } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
+            let scroll = if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
                 Some(&mut self.confirmation_scroll)
             } else if self.show_git_view {
                 if self.git.focused_pane == GitPane::Diff {
@@ -428,12 +463,6 @@ impl App {
                     }
                     _ => {}
                 }
-            } else if self.show_help {
-                match key_event.code {
-                    KeyCode::Backspace | KeyCode::Char('?') => self.show_help = false,
-                    KeyCode::Char('q') => self.exit = true,
-                    _ => {}
-                }
             } else {
                 match key_event.code {
                     // New Project
@@ -534,11 +563,6 @@ impl App {
                         self.show_update_input = true;
                         self.err = None;
                         text_in.input_mode = InputMode::Editing;
-                    }
-                    // Help window
-                    KeyCode::Char('?') => {
-                        self.help_scroll = 0;
-                        self.show_help = true;
                     }
                     _ => {}
                 }
