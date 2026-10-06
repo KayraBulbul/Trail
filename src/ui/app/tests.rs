@@ -1341,7 +1341,7 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     let temp_dir = TestDirectory::new();
     let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
     commit(&dir, "a.txt", "a\n", "first");
-    commit(&dir, "b.txt", "second line\n", "second");
+    commit(&dir, "b.txt", "second line\n", "second: a longer subject");
     git(&dir, &["branch", "feature"]);
     fs::write(dir.join("a.txt"), "changed\n").unwrap();
 
@@ -1368,6 +1368,8 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
     assert!(matches!(app.git.entries[0], GitEntry::Uncommitted));
     assert_eq!(app.git.entries.len(), 3);
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("second: a longer subject · just now"));
     press(&mut app, &mut input, &conn, KeyCode::Char('G'));
     assert_eq!(app.git.entry_selection.selected(), Some(2));
     press(&mut app, &mut input, &conn, KeyCode::Char('g'));

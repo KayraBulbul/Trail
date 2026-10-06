@@ -538,28 +538,10 @@ impl App {
             frame.render_widget(message, error_area);
         }
 
-        let [list_area, diff_area] = content_area.layout(&Layout::horizontal([
-            Constraint::Percentage(20),
-            Constraint::Percentage(80),
-        ]));
-        self.add_click(list_area, list_area, Click::Focus(ctrl('h')));
-        if self.git.diff.is_some() {
-            self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
-        }
-
         let list_focused = self.git.focused_pane == GitPane::List;
-        if let Some(branch) = &self.git.opened_branch {
-            let block = Block::bordered()
-                .title(format!("Commits · {branch}"))
-                .border_style(theme::border(list_focused));
-            if self.git.entries.is_empty() {
-                let message = Paragraph::new("No commits yet")
-                    .style(theme::SECONDARY)
-                    .block(block);
-                frame.render_widget(message, list_area);
-            } else {
-                let entries: Vec<ListItem<'_>> = self
-                    .git
+        let (title, items, selection) = if let Some(branch) = &self.git.opened_branch {
+            let entries: Vec<ListItem<'_>> =
+                self.git
                     .entries
                     .iter()
                     .map(|entry| match entry {
@@ -576,15 +558,11 @@ impl App {
                         ])),
                     })
                     .collect();
-                let list = List::new(entries).highlight_symbol("> ").block(block);
-                frame.render_stateful_widget(list, list_area, &mut self.git.entry_selection);
-                self.record_list_rows(
-                    list_area,
-                    self.git.entry_selection.offset(),
-                    self.git.entries.len(),
-                    Click::GitItem,
-                );
-            }
+            (
+                format!("Commits · {branch}"),
+                entries,
+                &mut self.git.entry_selection,
+            )
         } else {
             let branches: Vec<ListItem<'_>> = self
                 .git
@@ -608,19 +586,47 @@ impl App {
                     }
                 })
                 .collect();
-            let list = List::new(branches).highlight_symbol("> ").block(
-                Block::bordered()
-                    .title("Branches")
-                    .border_style(theme::border(list_focused)),
-            );
-            frame.render_stateful_widget(list, list_area, &mut self.git.branch_selection);
-            self.record_list_rows(
-                list_area,
-                self.git.branch_selection.offset(),
-                self.git.branches.len(),
-                Click::GitItem,
-            );
+            (
+                "Branches".to_string(),
+                branches,
+                &mut self.git.branch_selection,
+            )
+        };
+
+        // Fit the list to its widest row (plus the "> " marker and borders), from
+        // 30 columns up to half the screen, so subjects and ages aren't cut off.
+        let widest = items
+            .iter()
+            .map(ListItem::width)
+            .chain([Span::raw(title.as_str()).width()])
+            .max()
+            .unwrap_or(0);
+        let list_width = (widest as u16 + 4).max(30).min(content_area.width / 2);
+        let [list_area, diff_area] = content_area.layout(&Layout::horizontal([
+            Constraint::Length(list_width),
+            Constraint::Min(0),
+        ]));
+
+        let block = Block::bordered()
+            .title(title)
+            .border_style(theme::border(list_focused));
+        let len = items.len();
+        if items.is_empty() {
+            let message = Paragraph::new("No commits yet")
+                .style(theme::SECONDARY)
+                .block(block);
+            frame.render_widget(message, list_area);
+        } else {
+            let list = List::new(items).highlight_symbol("> ").block(block);
+            frame.render_stateful_widget(list, list_area, selection);
         }
+        let offset = selection.offset();
+
+        self.add_click(list_area, list_area, Click::Focus(ctrl('h')));
+        if self.git.diff.is_some() {
+            self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
+        }
+        self.record_list_rows(list_area, offset, len, Click::GitItem);
 
         let diff_focused = self.git.focused_pane == GitPane::Diff;
         if let Some(diff) = &self.git.diff {
