@@ -1,4 +1,4 @@
-use super::{App, BrowserPane, DiffSource, GitEntry, GitPane};
+use super::{App, BrowserPane, DiffSource, GitEntry, GitPane, TablePane};
 use crate::{
     types::{project::ProjectStep, update::UpdateStep},
     ui::input::{self, InputMode},
@@ -17,6 +17,32 @@ impl App {
     ) -> io::Result<()> {
         if key_event.kind == KeyEventKind::Press {
             self.update_click = None;
+            // Help opens over whatever is on screen, so closing it returns there.
+            if self.show_help {
+                let scroll = &mut self.help_scroll;
+                match key_event.code {
+                    KeyCode::Backspace | KeyCode::Char('?') => self.show_help = false,
+                    KeyCode::Char('q') => self.exit = true,
+                    KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+                    KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+                    KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+                    KeyCode::Home | KeyCode::Char('g') => *scroll = 0,
+                    KeyCode::End | KeyCode::Char('G') => *scroll = u16::MAX,
+                    _ => {}
+                }
+                return Ok(());
+            }
+            // Help is for browsing pages; forms take ? as text.
+            if key_event.code == KeyCode::Char('?')
+                && !self.show_project_input
+                && !self.show_update_input
+            {
+                self.help_scroll = 0;
+                self.show_help = true;
+                return Ok(());
+            }
+
             if self.pending_project_delete_id.is_some() {
                 match key_event.code {
                     KeyCode::Enter => {
@@ -67,10 +93,13 @@ impl App {
                 return Ok(());
             }
 
-            let scroll = if self.show_help {
-                Some(&mut self.help_scroll)
+            let mut g_scrolls = true;
+            let scroll = if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                None
             } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
                 Some(&mut self.confirmation_scroll)
+            } else if self.show_update_table && self.table_pane == TablePane::Preview {
+                Some(&mut self.preview_scroll)
             } else if self.show_git_view {
                 if self.git.focused_pane == GitPane::Diff {
                     Some(&mut self.git.diff_scroll)
@@ -82,6 +111,7 @@ impl App {
                 && !self.show_update_table
                 && self.focused_pane == BrowserPane::LatestUpdate
             {
+                g_scrolls = false;
                 Some(&mut self.detail_scroll)
             } else {
                 None
@@ -93,7 +123,8 @@ impl App {
                     KeyCode::PageDown => Some(scroll.saturating_add(10)),
                     KeyCode::PageUp => Some(scroll.saturating_sub(10)),
                     KeyCode::Home => Some(0),
-                    KeyCode::End => Some(u16::MAX),
+                    KeyCode::Char('g') if g_scrolls => Some(0),
+                    KeyCode::End | KeyCode::Char('G') => Some(u16::MAX),
                     _ => None,
                 };
                 if let Some(next) = next {
@@ -271,14 +302,22 @@ impl App {
                 }
             } else if self.show_update_table {
                 match key_event.code {
-                    KeyCode::Esc => self.show_update_table = false,
+                    KeyCode::Backspace => self.show_update_table = false,
                     KeyCode::Char('q') => self.exit = true,
+                    // Focus preview
+                    KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.table_pane = TablePane::Preview;
+                    }
+                    // Focus table
+                    KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.table_pane = TablePane::Updates;
+                    }
                     KeyCode::Char('j') | KeyCode::Down if !self.updates.is_empty() => {
                         let index = match self.update_selection.selected() {
                             Some(index) => index.saturating_add(1).min(self.updates.len() - 1),
                             None => 0,
                         };
-                        self.update_selection.select(Some(index));
+                        self.select_update(index);
                     }
                     KeyCode::Char('k') | KeyCode::Up if !self.updates.is_empty() => {
                         let index = self
@@ -286,22 +325,11 @@ impl App {
                             .selected()
                             .unwrap_or(0)
                             .saturating_sub(1);
-                        self.update_selection.select(Some(index));
+                        self.select_update(index);
                     }
-                    KeyCode::Char('h') | KeyCode::Left if !self.updates.is_empty() => {
-                        let column = self
-                            .update_selection
-                            .selected_column()
-                            .unwrap_or(0)
-                            .saturating_sub(1);
-                        self.update_selection.select_column(Some(column));
-                    }
-                    KeyCode::Char('l') | KeyCode::Right if !self.updates.is_empty() => {
-                        let column = match self.update_selection.selected_column() {
-                            Some(column) => (column + 1).min(4),
-                            None => 0,
-                        };
-                        self.update_selection.select_column(Some(column));
+                    KeyCode::Char('g') if !self.updates.is_empty() => self.select_update(0),
+                    KeyCode::Char('G') if !self.updates.is_empty() => {
+                        self.select_update(self.updates.len() - 1);
                     }
                     KeyCode::Enter => {
                         if let Some(update) = self
@@ -340,7 +368,7 @@ impl App {
             } else if self.show_git_view {
                 match key_event.code {
                     // Step back: diff -> commits -> branches -> close
-                    KeyCode::Esc => {
+                    KeyCode::Backspace => {
                         if self.git.focused_pane == GitPane::Diff {
                             self.git.focused_pane = GitPane::List;
                         } else if self.git.opened_branch.is_some() && !self.git.branches.is_empty()
@@ -388,6 +416,13 @@ impl App {
                             selection.select(Some(index));
                         }
                     }
+                    // Top / bottom of branches / commits
+                    KeyCode::Char(key @ ('g' | 'G')) if self.git.focused_pane == GitPane::List => {
+                        let (selection, len) = self.git_list_selection();
+                        if len > 0 {
+                            selection.select(Some(if key == 'g' { 0 } else { len - 1 }));
+                        }
+                    }
                     // Open branch commits
                     KeyCode::Enter
                         if self.git.focused_pane == GitPane::List
@@ -427,12 +462,6 @@ impl App {
                     }
                     _ => {}
                 }
-            } else if self.show_help {
-                match key_event.code {
-                    KeyCode::Esc | KeyCode::Char('?') => self.show_help = false,
-                    KeyCode::Char('q') => self.exit = true,
-                    _ => {}
-                }
             } else {
                 match key_event.code {
                     // New Project
@@ -467,9 +496,23 @@ impl App {
 
                         self.project_selection.select(Some(index));
                     }
+                    // Top / bottom of projects list
+                    KeyCode::Char(key @ ('g' | 'G'))
+                        if self.focused_pane == BrowserPane::Projects
+                            && !self.projects.is_empty() =>
+                    {
+                        let index = if key == 'g' {
+                            0
+                        } else {
+                            self.projects.len() - 1
+                        };
+                        self.project_selection.select(Some(index));
+                    }
                     // Open updates table
                     KeyCode::Char('u') if !self.opened_project_id.is_none() => {
                         self.show_update_table = true;
+                        self.table_pane = TablePane::Updates;
+                        self.preview_scroll = 0;
                     }
                     // Open git view
                     KeyCode::Char('g') if self.opened_git_directory().is_some() => {
@@ -521,11 +564,6 @@ impl App {
                         self.show_update_input = true;
                         self.err = None;
                         text_in.input_mode = InputMode::Editing;
-                    }
-                    // Help window
-                    KeyCode::Char('?') => {
-                        self.help_scroll = 0;
-                        self.show_help = true;
                     }
                     _ => {}
                 }

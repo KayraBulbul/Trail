@@ -37,11 +37,14 @@ The Latest Update pane always shows the newest update. Press `u` to see all of t
 | `a` | New update |
 | `e` | Edit the update being shown |
 | `u` | All updates for the open project |
-| `g` | Git view (git projects only) |
+| `g` | Git view (git projects only, from the Latest Update pane) |
+| `g` / `G` | First / last item in a list, or top / end of the text |
+| `Backspace` | Go back (from the update table, the git view or help) |
 | `d` | Delete the selected project or update |
 | `j` / `k` | Move or scroll |
 | `Ctrl+h` / `Ctrl+l` | Focus Projects / Latest Update |
-| `?` | Help |
+| `Ctrl+j` / `Ctrl+k` | In the update table, focus the Preview to scroll it / go back to the table |
+| `?` | Help, from any page except the project and update forms. `Backspace` closes it |
 | `q` | Quit |
 
 You can also use the mouse. Click a project (or a branch or commit in the git view) to open it, click a pane to focus it, and scroll to move through whatever is under the cursor. Every key shown in the help row at the bottom, and in prompts and popups, can be clicked instead of pressed. In the update table, the first click selects a row and the second opens it.
@@ -106,7 +109,7 @@ If a project's directory is inside a git repository, Trail detects it automatica
 - Git projects are marked with `git` in the Projects list.
 - The Latest Update pane shows the current branch, how many files have changed, and when the last commit was made.
 - Every new update records the branch and commit it was written on.
-- Press `g` on an open git project to browse its branches and commits and view their diffs. This is read-only: Trail never checks out branches or changes your repository.
+- Press `g` in the Latest Update pane of an open git project to browse its branches and commits and view their diffs. This is read-only: Trail never checks out branches or changes your repository.
 
 If the project directory is a subfolder of a repository, Trail only shows commits and changes inside that folder.
 
@@ -115,10 +118,11 @@ Git view keys:
 | Key | Action |
 | --- | --- |
 | `j` / `k` | Move through branches or commits, or scroll the diff |
+| `g` / `G` | First / last branch or commit, or top / end of the diff |
 | `Enter` | Open a branch's commits, or a commit's diff |
 | `Ctrl+h` / `Ctrl+l` | Focus the list / the diff |
 | `r` | Refresh |
-| `Esc` | Go back (diff → commits → branches → close) |
+| `Backspace` | Go back (diff → commits → branches → close) |
 | `q` | Quit |
 
 ## Your data

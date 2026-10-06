@@ -52,6 +52,8 @@ fn setup() -> (App, Input, Connection) {
             show_help: false,
             help_scroll: 0,
             detail_scroll: 0,
+            table_pane: TablePane::default(),
+            preview_scroll: 0,
             confirmation_scroll: 0,
             projects: Vec::new(),
             updates: Vec::new(),
@@ -410,6 +412,8 @@ fn browser_navigation_stops_at_list_boundaries() {
         (KeyCode::Up, 0),
         (KeyCode::Char('j'), 1),
         (KeyCode::Char('k'), 0),
+        (KeyCode::Char('G'), 1),
+        (KeyCode::Char('g'), 0),
     ] {
         press(&mut app, &mut input, &conn, key);
         assert_eq!(app.project_selection.selected(), Some(expected));
@@ -846,6 +850,8 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
         (KeyCode::Down, 1),
         (KeyCode::Char('k'), 0),
         (KeyCode::Char('j'), 1),
+        (KeyCode::Char('g'), 0),
+        (KeyCode::Char('G'), 1),
     ] {
         press(&mut app, &mut input, &conn, key);
         assert_eq!(app.update_selection.selected(), Some(expected));
@@ -854,25 +860,46 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
 }
 
 #[test]
-fn update_table_column_selection_stops_at_the_edges() {
+fn update_table_previews_the_selected_update() {
     let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[1].body = "Older body\nOLDER_SECOND_LINE".into();
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    assert!(app.show_update_table);
-    for (key, expected) in [
-        (KeyCode::Left, 0),
-        (KeyCode::Char('l'), 1),
-        (KeyCode::Right, 2),
-        (KeyCode::Right, 3),
-        (KeyCode::Right, 4),
-        (KeyCode::Right, 4),
-        (KeyCode::Char('h'), 3),
-    ] {
-        press(&mut app, &mut input, &conn, key);
-        assert_eq!(app.update_selection.selected_column(), Some(expected));
-    }
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
-    assert!(!app.show_update_table);
-    assert!(!app.exit);
+    assert!(!rendered_text(&mut app, &mut input, 120, 24).contains("OLDER_SECOND_LINE"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("Preview"));
+    assert!(text.contains("OLDER_SECOND_LINE"));
+}
+
+#[test]
+fn ctrl_j_focuses_the_preview_to_scroll_it_and_ctrl_k_returns_to_the_table() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].body = format!("{}PREVIEW_END", "line\n".repeat(40));
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    assert!(!rendered_text(&mut app, &mut input, 120, 24).contains("PREVIEW_END"));
+
+    app.handle_key_event(ctrl('j'), &mut input, &conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert!(rendered_text(&mut app, &mut input, 120, 24).contains("PREVIEW_END"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert_eq!(app.update_selection.selected(), Some(0));
+
+    // Back on the table, j moves the selection and the next preview starts at the top.
+    app.handle_key_event(ctrl('k'), &mut input, &conn).unwrap();
+    press(&mut app, &mut input, &conn, KeyCode::Char('j'));
+    assert_eq!(app.update_selection.selected(), Some(1));
+    assert_eq!(app.preview_scroll, 0);
+
+    // Scrolling over the preview focuses and scrolls it.
+    press(&mut app, &mut input, &conn, KeyCode::Char('k'));
+    let at = find_on_screen(&mut app, &mut input, "Preview");
+    mouse(&mut app, &mut input, &conn, MouseEventKind::ScrollDown, at);
+    assert!(app.table_pane == TablePane::Preview);
+    assert_eq!(app.preview_scroll, 1);
+    assert_eq!(app.update_selection.selected(), Some(0));
 }
 
 #[test]
@@ -882,17 +909,10 @@ fn update_table_empty_navigation_and_quit() {
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    for key in [
-        KeyCode::Up,
-        KeyCode::Down,
-        KeyCode::Left,
-        KeyCode::Right,
-        KeyCode::Enter,
-    ] {
+    for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter] {
         press(&mut app, &mut input, &conn, key);
         assert!(app.show_update_table);
         assert_eq!(app.update_selection.selected(), None);
-        assert_eq!(app.update_selection.selected_column(), None);
         assert!(app.opened_update_id.is_none());
     }
     press(&mut app, &mut input, &conn, KeyCode::Char('q'));
@@ -915,7 +935,7 @@ fn browser_focus_stays_on_visible_panes() {
     press(&mut app, &mut input, &conn, KeyCode::Char('j'));
     assert_eq!(app.update_selection.selected(), selected);
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.focused_pane == BrowserPane::LatestUpdate);
     for _ in 0..2 {
         focus_projects(&mut app, &mut input, &conn);
@@ -942,7 +962,7 @@ fn help_blocks_browser_actions_until_closed() {
     assert!(!app.show_update_table);
     assert!(app.pending_project_delete_id.is_none());
     assert_eq!(app.project_selection.selected(), Some(0));
-    for close in [KeyCode::Esc, KeyCode::Char('?')] {
+    for close in [KeyCode::Backspace, KeyCode::Char('?')] {
         app.show_help = true;
         press(&mut app, &mut input, &conn, close);
         assert!(!app.show_help);
@@ -1044,7 +1064,6 @@ fn confirmed_update_delete_uses_original_id_and_handles_last_update() {
     assert!(app.updates.is_empty());
     assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
     assert_eq!(app.update_selection.selected(), None);
-    assert_eq!(app.update_selection.selected_column(), None);
     assert_eq!(app.opened_project_id.as_deref(), Some("a"));
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     assert!(app.pending_update_delete_id.is_none());
@@ -1223,18 +1242,58 @@ fn rendered_text(app: &mut App, input: &mut Input, width: u16, height: u16) -> S
         .collect()
 }
 
+/// Opens help with `key`, then closes it with Backspace.
+fn open_and_close_help(app: &mut App, input: &mut Input, conn: &Connection, key: KeyCode) {
+    press(app, input, conn, key);
+    assert!(app.show_help);
+    assert!(rendered_text(app, input, 120, 24).contains("Trail keybindings"));
+    press(app, input, conn, KeyCode::Backspace);
+    assert!(!app.show_help);
+}
+
+#[test]
+fn help_opens_over_pages_and_popups_but_not_forms() {
+    let (mut app, mut input, conn) = browser_with_updates();
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    open_and_close_help(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(app.show_update_table);
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    open_and_close_help(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(app.pending_update_delete_id.is_some());
+    assert!(rendered_text(&mut app, &mut input, 120, 24).contains("Delete update?"));
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
+
+    // Forms take ? as text and never open help, from a field or the confirmation.
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    type_text(&mut app, &mut input, &conn, "Why?");
+    assert_eq!(input.input, "Why?");
+    for field in ["", "body", ""] {
+        submit(&mut app, &mut input, &conn, field);
+    }
+    assert!(input.update_step == UpdateStep::Confirm);
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    assert!(!app.show_help);
+}
+
 #[test]
 fn help_is_visible_without_projects_and_its_contents_are_reachable() {
     let (mut app, mut input, conn) = browser();
     press(&mut app, &mut input, &conn, KeyCode::Char('?'));
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Trail keybindings"));
     press(&mut app, &mut input, &conn, KeyCode::End);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
     press(&mut app, &mut input, &conn, KeyCode::Down);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Esc / ?: return"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Backspace / ?: close"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Browser"));
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     press(&mut app, &mut input, &conn, KeyCode::Char('A'));
     assert!(app.show_project_input);
 }
@@ -1242,6 +1301,7 @@ fn help_is_visible_without_projects_and_its_contents_are_reachable() {
 #[test]
 fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
     let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].title = "TOP_TITLE".into();
     app.updates[0].body = format!("{}\nBODY_END", "界abc".repeat(300));
     app.updates[0].next = "NEXT_STEP".into();
     for (width, height) in [(80, 24), (40, 12)] {
@@ -1249,10 +1309,11 @@ fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
         let text = rendered_text(&mut app, &mut input, width, height);
         assert!(text.contains("BODY_END"));
         assert!(text.contains("NEXT_STEP"));
+        assert!(!text.contains("TOP_TITLE"));
         press(&mut app, &mut input, &conn, KeyCode::PageDown);
         assert!(rendered_text(&mut app, &mut input, width, height).contains("NEXT_STEP"));
         press(&mut app, &mut input, &conn, KeyCode::Home);
-        assert!(rendered_text(&mut app, &mut input, width, height).contains("Title: Latest"));
+        assert!(rendered_text(&mut app, &mut input, width, height).contains("TOP_TITLE"));
     }
     press(&mut app, &mut input, &conn, KeyCode::Char('j'));
     assert!(app.detail_scroll > 0);
@@ -1277,7 +1338,7 @@ fn confirmation_scrolling_preserves_the_draft_and_allows_saving() {
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("NEXT_STEP"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     press(&mut app, &mut input, &conn, KeyCode::Up);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Title: Scrollable"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Scrollable"));
     assert_eq!(input.update.body.as_deref(), Some(body.as_str()));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     let updates = sqlite::get_updates(&conn, "a").unwrap();
@@ -1362,11 +1423,26 @@ fn opened_git_project_shows_marker_summary_and_git_hint() {
 fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     let temp_dir = TestDirectory::new();
     let (mut app, mut input, conn, dir) = browser_with_git_project(&temp_dir);
-    commit(&dir, "a.txt", "a\n", "first");
-    commit(&dir, "b.txt", "second line\n", "second");
+    commit(
+        &dir,
+        "a.txt",
+        "a\n",
+        "first: a subject far too long to fit in half of a 120 column screen",
+    );
+    commit(&dir, "b.txt", "second line\n", "second: a longer subject");
     git(&dir, &["branch", "feature"]);
     fs::write(dir.join("a.txt"), "changed\n").unwrap();
 
+    // g opens the git view only from the Latest Update pane; on Projects it goes to the top.
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert!(!app.show_git_view);
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+        &mut input,
+        &conn,
+    )
+    .unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Char('g'));
     assert!(app.show_git_view);
     let selected = app.git.branch_selection.selected().unwrap();
@@ -1380,6 +1456,13 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     assert_eq!(app.git.opened_branch.as_deref(), Some("main"));
     assert!(matches!(app.git.entries[0], GitEntry::Uncommitted));
     assert_eq!(app.git.entries.len(), 3);
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("second: a longer subject · just now"));
+    assert!(text.contains("first: a subject far too long to fit… · just now"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('G'));
+    assert_eq!(app.git.entry_selection.selected(), Some(2));
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    assert_eq!(app.git.entry_selection.selected(), Some(0));
 
     press(&mut app, &mut input, &conn, KeyCode::Down);
     press(&mut app, &mut input, &conn, KeyCode::Enter);
@@ -1388,12 +1471,12 @@ fn git_view_walks_branches_commits_and_diff_then_steps_back() {
     assert!(text.contains("second"));
     assert!(text.contains("+second line"));
 
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.git.focused_pane == GitPane::List);
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(app.git.opened_branch.is_none());
     assert_eq!(app.git.branch_selection.selected(), Some(selected));
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(!app.show_git_view);
     assert!(!app.exit);
 }
@@ -1413,8 +1496,8 @@ fn git_view_without_commits_shows_uncommitted_changes() {
     assert!(text.contains("Untracked:"));
     assert!(text.contains("new.txt"));
 
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
+    press(&mut app, &mut input, &conn, KeyCode::Backspace);
     assert!(!app.show_git_view);
 }
 
@@ -1457,7 +1540,7 @@ fn new_updates_record_branch_and_commit_and_edits_keep_them() {
     assert_eq!(saved.branch.as_deref(), Some("main"));
     assert_eq!(saved.commit_sha.as_deref(), Some(first.as_str()));
     let text = rendered_text(&mut app, &mut input, 160, 24);
-    assert!(text.contains(&format!("Written on: main @ {}", &first[..7])));
+    assert!(text.contains(&format!("written on main @ {}", &first[..7])));
 
     commit(&dir, "b.txt", "b\n", "second");
     press(&mut app, &mut input, &conn, KeyCode::Char('e'));
@@ -1476,12 +1559,21 @@ const SCREEN: (u16, u16) = (120, 24);
 
 /// Draws a frame and returns the cell where `text` first appears.
 fn find_on_screen(app: &mut App, input: &mut Input, text: &str) -> (u16, u16) {
+    find_on_screen_of_size(app, input, text, SCREEN)
+}
+
+fn find_on_screen_of_size(
+    app: &mut App,
+    input: &mut Input,
+    text: &str,
+    (width, height): (u16, u16),
+) -> (u16, u16) {
     let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(SCREEN.0, SCREEN.1)).unwrap();
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| app.render(frame, input)).unwrap();
     let buffer = terminal.backend().buffer();
-    for y in 0..SCREEN.1 {
-        let row: String = (0..SCREEN.0).map(|x| buffer[(x, y)].symbol()).collect();
+    for y in 0..height {
+        let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
         if let Some(index) = row.find(text) {
             return (row[..index].chars().count() as u16, y);
         }
@@ -1542,8 +1634,35 @@ fn clicking_a_hint_presses_its_key_but_multi_key_hints_do_nothing() {
 
     click(&mut app, &mut input, &conn, "(A) new");
     assert!(app.show_project_input);
-    click(&mut app, &mut input, &conn, "Esc: cancel");
+    click(&mut app, &mut input, &conn, "(Esc) cancel");
     assert!(!app.show_project_input);
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('?'));
+    click(&mut app, &mut input, &conn, "(Backspace) close");
+    assert!(!app.show_help);
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    click(&mut app, &mut input, &conn, "(Backspace) back");
+    assert!(!app.show_update_table);
+}
+
+#[test]
+fn help_rows_wrap_on_narrow_screens_and_keep_every_hint_clickable() {
+    let (mut app, mut input, conn) = browser();
+    seed_projects(&conn);
+    app.reload_projects(&conn).unwrap();
+
+    let at = find_on_screen_of_size(&mut app, &mut input, "(q) quit", (40, 12));
+    mouse(
+        &mut app,
+        &mut input,
+        &conn,
+        MouseEventKind::Down(MouseButton::Left),
+        at,
+    );
+
+    assert!(app.exit);
 }
 
 #[test]
@@ -1554,11 +1673,11 @@ fn popup_keys_are_clickable_and_the_screen_behind_it_is_not() {
 
     click(&mut app, &mut input, &conn, "Beta");
     assert_eq!(app.opened_project_id.as_deref(), Some("a"));
-    click(&mut app, &mut input, &conn, "Esc");
+    click(&mut app, &mut input, &conn, "(Esc) cancel");
     assert!(app.pending_project_delete_id.is_none());
 
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
-    click(&mut app, &mut input, &conn, "Enter");
+    click(&mut app, &mut input, &conn, "(Enter) delete");
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 1);
 }
 
@@ -1586,7 +1705,7 @@ fn scrolling_over_a_pane_focuses_and_scrolls_it() {
     app.updates[0].body = "line\n".repeat(100);
     focus_projects(&mut app, &mut input, &conn);
 
-    let at = find_on_screen(&mut app, &mut input, "Title: Latest");
+    let at = find_on_screen(&mut app, &mut input, "Latest Update");
     mouse(&mut app, &mut input, &conn, MouseEventKind::ScrollDown, at);
 
     assert!(app.focused_pane == BrowserPane::LatestUpdate);

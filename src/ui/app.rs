@@ -41,6 +41,13 @@ pub enum BrowserPane {
 }
 
 #[derive(PartialEq, Default)]
+pub enum TablePane {
+    #[default]
+    Updates,
+    Preview,
+}
+
+#[derive(PartialEq, Default)]
 pub enum GitPane {
     #[default]
     List,
@@ -88,6 +95,8 @@ pub struct App {
     pub show_help: bool,
     pub help_scroll: u16,
     pub detail_scroll: u16,
+    pub table_pane: TablePane,
+    pub preview_scroll: u16,
     pub confirmation_scroll: u16,
     pub projects: Vec<Project>,
     pub updates: Vec<Update>,
@@ -150,6 +159,14 @@ impl App {
             && !self.show_git_view
             && self.pending_project_delete_id.is_none()
             && self.pending_update_delete_id.is_none()
+    }
+
+    /// Selects a row of the updates table and shows its preview from the top.
+    fn select_update(&mut self, index: usize) {
+        if self.update_selection.selected() != Some(index) {
+            self.preview_scroll = 0;
+        }
+        self.update_selection.select(Some(index));
     }
 
     fn start_update_edit(&mut self, conn: &Connection, text_in: &mut Input, id: &str) {

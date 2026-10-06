@@ -1,29 +1,37 @@
-use super::{App, BrowserPane, Click, GitEntry, GitPane, mouse::ctrl};
+use super::{App, BrowserPane, Click, GitEntry, GitPane, TablePane, mouse::ctrl};
 use crate::{
     format,
     git::repo::Head,
-    types::{project::ProjectStep, update::UpdateStep},
+    types::{
+        project::ProjectStep,
+        update::{Update, UpdateStep},
+    },
     ui::{input, theme},
 };
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Position, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{
-        Block, Cell, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap,
+        Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Scrollbar, ScrollbarState,
+        Table, Wrap,
     },
 };
 
-const INFO_TEXT: [&str; 1] =
-    ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (d) delete | (e) edit | (q) quit"];
-const UPDATE_ROW_HEIGHT: u16 = 4;
+const TABLE_HINTS: &str = "(Enter) open | (j/k) select | (Ctrl+j) preview | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
+const PREVIEW_HINTS: &str = "(Enter) open | (j/k) scroll | (Ctrl+k) table | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame, text_in: &mut input::Input) {
         self.clicks.clear();
         frame.render_widget(Block::new().style(theme::BASE), frame.area());
+        if self.show_help {
+            // Help covers every page and popup; closing it shows them again.
+            self.render_help_window(frame);
+            return;
+        }
         if self.show_project_input
             && (text_in.project_step == ProjectStep::Name
                 || text_in.project_step == ProjectStep::Directory)
@@ -39,8 +47,6 @@ impl App {
             self.render_project_confirmation(frame, text_in);
         } else if self.show_update_input && text_in.update_step == UpdateStep::Confirm {
             self.render_update_confirmation(frame, text_in);
-        } else if self.show_help {
-            self.render_help_window(frame);
         } else if self.show_update_popup {
             if self.projects.is_empty() {
                 self.render_empty_state(frame);
@@ -53,11 +59,12 @@ impl App {
         } else if self.show_git_view {
             self.render_git_view(frame);
         } else if self.show_update_table {
-            let layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
-            let rects = frame.area().layout_vec(&layout);
-
-            self.render_table(frame, rects[0]);
-            self.render_footer(frame, rects[1]);
+            let hints = match self.table_pane {
+                TablePane::Updates => TABLE_HINTS,
+                TablePane::Preview => PREVIEW_HINTS,
+            };
+            let area = self.render_bottom_rows(frame, hints);
+            self.render_table(frame, area);
         } else {
             self.render_browser(frame);
         }
@@ -75,10 +82,10 @@ impl App {
         };
         let help = match (&text_in.project_step, &text_in.completion) {
             (ProjectStep::Directory, Some(_)) => {
-                "Tab/Shift+Tab: cycle | Right: accept | Enter: continue | Esc: cancel"
+                "(Tab/Shift+Tab) cycle | (Right) accept | (Enter) continue | (Esc) cancel"
             }
-            (ProjectStep::Directory, None) => "Tab: complete | Enter: continue | Esc: cancel",
-            _ => "Enter: continue | Esc: cancel",
+            (ProjectStep::Directory, None) => "(Tab) complete | (Enter) continue | (Esc) cancel",
+            _ => "(Enter) continue | (Esc) cancel",
         };
         self.render_input(frame, text_in, title, placeholder, help);
     }
@@ -91,9 +98,9 @@ impl App {
             UpdateStep::Confirm => unreachable!("Confirm is rendered separately"),
         };
         let help = if matches!(text_in.update_step, UpdateStep::Body | UpdateStep::Next) {
-            "Enter: continue | Esc: cancel | Shift+Enter: new line"
+            "(Enter) continue | (Shift+Enter) new line | (Esc) cancel"
         } else {
-            "Enter: continue | Esc: cancel"
+            "(Enter) continue | (Esc) cancel"
         };
         let title = if text_in.editing_update.is_some() {
             format!("Edit: {title}")
@@ -111,9 +118,14 @@ impl App {
         placeholder: &str,
         help: &str,
     ) {
-        let area = frame.area();
+        let area = self.render_bottom_rows(frame, help);
         let width = area.width.min(72);
-        if width < 3 || area.height < 5 {
+        let matches = text_in
+            .completion
+            .as_ref()
+            .map(|completion| completion_line(completion, usize::from(width)));
+        let matches_height = u16::from(matches.is_some());
+        if width < 3 || area.height < 3 + matches_height {
             return;
         }
         let (mut lines, (cursor_x, cursor_y)) = wrapped_input(
@@ -127,29 +139,10 @@ impl App {
         } else {
             theme::TEXT
         };
-        let hints = help;
-        let help_lines = wrapped_input(help, usize::MAX, usize::from(width)).0;
-        let error_height = u16::from(self.err.is_some());
-        let matches = text_in
-            .completion
-            .as_ref()
-            .map(|completion| completion_line(completion, usize::from(width)));
-        let matches_height = u16::from(matches.is_some());
-        let help_height = help_lines.len().min(usize::from(
-            (area.height - 3).saturating_sub(error_height + matches_height),
-        )) as u16;
-        let below_height = matches_height + help_height + error_height;
-        let help_lines_count = help_lines.len();
-        let help = Paragraph::new(Text::from(
-            help_lines.into_iter().map(Line::from).collect::<Vec<_>>(),
-        ))
-        .style(theme::SECONDARY)
-        .centered();
-        let height =
-            (lines.len() + 2).min(usize::from(area.height.saturating_sub(below_height))) as u16;
+        let height = (lines.len() + 2).min(usize::from(area.height - matches_height)) as u16;
         let input_area = Rect::new(
             area.x + (area.width - width) / 2,
-            area.y + ((area.height - height) / 2).min(area.height - height - below_height),
+            area.y + (area.height - height - matches_height) / 2,
             width,
             height,
         );
@@ -176,27 +169,6 @@ impl App {
                 Rect::new(input_area.x, input_area.bottom(), width, matches_height),
             );
         }
-        let help_area = Rect::new(
-            input_area.x,
-            input_area.bottom() + matches_height,
-            width,
-            help_height,
-        );
-        frame.render_widget(help, help_area);
-        if help_height == 1 && help_lines_count == 1 {
-            self.record_hints(hints, help_area, true);
-        }
-        if let Some(error) = &self.err {
-            frame.render_widget(
-                Paragraph::new(error.as_str()).fg(theme::ERROR).centered(),
-                Rect::new(
-                    input_area.x,
-                    input_area.bottom() + matches_height + help_height,
-                    width,
-                    error_height,
-                ),
-            );
-        }
         frame.set_cursor_position(Position::new(
             input_area.x + 1 + cursor_x as u16,
             input_area.y + 1 + (cursor_y - scroll) as u16,
@@ -204,137 +176,96 @@ impl App {
     }
 
     fn render_project_confirmation(&mut self, frame: &mut Frame, text_in: &input::Input) {
-        let layout = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ]);
-        let [help_area, name_area, directory_area, error_area] = frame.area().layout(&layout);
-
-        let help_msg = vec![
-            "Press ".into(),
-            "Esc".bold(),
-            " to abort, ".into(),
-            "Enter".bold(),
-            " to confirm project.".into(),
-        ];
-
-        if let Some(error) = &self.err {
-            let message =
-                Paragraph::new(error.to_string()).style(Style::default().fg(theme::ERROR));
-            frame.render_widget(message, error_area);
-        }
+        let area = self.render_bottom_rows(frame, "(Enter) create project | (Esc) cancel");
+        let [box_area, _] = area.layout(&Layout::vertical([
+            Constraint::Length(4),
+            Constraint::Min(0),
+        ]));
 
         let directory = text_in.project.directory.as_deref().unwrap_or("(missing)");
         let name = text_in.project.name.as_deref().unwrap_or("(missing)");
-
-        let name_msg = vec!["Name: ".into(), name.bold()];
-        let directory_msg = vec!["Directory: ".into(), directory.bold()];
-
-        let help_line = Line::from(help_msg);
-        self.record_bold_keys(&help_line, help_area);
-        let help_text = Text::from(help_line).patch_style(Style::default());
-        let help_message = Paragraph::new(help_text).style(theme::SECONDARY);
-        let name_text = Text::from(Line::from(name_msg)).patch_style(Style::default());
-        let name_message = Paragraph::new(name_text);
-        let directory_text = Text::from(Line::from(directory_msg)).patch_style(Style::default());
-        let directory_message = Paragraph::new(directory_text);
-
-        frame.render_widget(help_message, help_area);
-        frame.render_widget(name_message, name_area);
-        frame.render_widget(directory_message, directory_area);
+        let details = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("Name       ", theme::SECONDARY),
+                name.bold(),
+            ]),
+            Line::from(vec![
+                Span::styled("Directory  ", theme::SECONDARY),
+                directory.bold(),
+            ]),
+        ])
+        .block(
+            Block::bordered()
+                .title("New Project")
+                .padding(Padding::horizontal(1))
+                .border_style(theme::border(true)),
+        );
+        frame.render_widget(details, box_area);
     }
 
     fn render_update_confirmation(&mut self, frame: &mut Frame, text_in: &input::Input) {
-        let layout = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ]);
-        let [help_area, details_area, error_area] = frame.area().layout(&layout);
+        let (title, hints) = if text_in.editing_update.is_some() {
+            (
+                "Edit Update",
+                "(Enter) save changes | (j/k) scroll | (Esc) cancel",
+            )
+        } else {
+            (
+                "New Update",
+                "(Enter) save update | (j/k) scroll | (Esc) cancel",
+            )
+        };
+        let area = self.render_bottom_rows(frame, hints);
 
-        let help_msg = vec![
-            "Press ".into(),
-            "Esc".bold(),
-            " to abort, ".into(),
-            "Enter".bold(),
-            if text_in.editing_update.is_some() {
-                " to save changes."
-            } else {
-                " to confirm update."
-            }
-            .into(),
-            " | j/k: scroll".into(),
-        ];
-
-        if let Some(error) = &self.err {
-            let message =
-                Paragraph::new(error.to_string()).style(Style::default().fg(theme::ERROR));
-            frame.render_widget(message, error_area);
-        }
-
-        let title = text_in.update.title.as_deref().unwrap_or("(missing)");
-        let body = text_in.update.body.as_deref().unwrap_or("(missing)");
-        let next = text_in.update.next.as_deref().unwrap_or("(missing)");
-
-        let help_line = Line::from(help_msg);
-        self.record_bold_keys(&help_line, help_area);
-        let help_text = Text::from(help_line).patch_style(Style::default());
-        let help_message = Paragraph::new(help_text).style(theme::SECONDARY);
-        let details = Text::from(format!("Title: {title}\nBody: {body}\nNext: {next}"));
-
-        frame.render_widget(help_message, help_area);
-        render_scrolled(frame, details, details_area, &mut self.confirmation_scroll);
+        let details = update_lines(
+            text_in.update.title.as_deref().unwrap_or("(missing)"),
+            None,
+            text_in.update.body.as_deref().unwrap_or("(missing)"),
+            text_in.update.next.as_deref().unwrap_or("(missing)"),
+        );
+        let block = Block::bordered()
+            .title(title)
+            .padding(Padding::horizontal(1))
+            .border_style(theme::border(true));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        render_scrolled(frame, details, inner, &mut self.confirmation_scroll);
     }
 
     fn render_empty_state(&mut self, frame: &mut Frame) {
-        let error_height = if self.err.is_some() { 1 } else { 0 };
+        let area = self.render_bottom_rows(frame, "(A) new project | (?) help | (q) quit");
+        let [box_area, _] = area.layout(&Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ]));
 
-        let layout = Layout::vertical([Constraint::Length(error_height), Constraint::Length(3)]);
-        let [error_area, help_area] = frame.area().layout(&layout);
-
-        if let Some(error) = &self.err {
-            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
-
-            frame.render_widget(message, error_area);
-        }
-
-        let (msg, style) = (
-            vec![
-                "Press ".into(),
-                "A".bold(),
-                " to create a new project, ".into(),
-                "q".bold(),
-                " to quit.".into(),
-            ],
-            Style::default(),
-        );
-        let line = Line::from(msg);
-        self.record_bold_keys(&line, help_area.inner(Margin::new(1, 1)));
-        let text = Text::from(line).patch_style(style);
-        let help_message = Paragraph::new(text).block(
-            Block::bordered()
-                .title("Get Started!")
-                .border_style(theme::border(true)),
-        );
-        frame.render_widget(help_message, help_area);
+        let line = Line::from(vec![
+            "No projects yet. Press ".into(),
+            "A".bold(),
+            " to add your first one.".into(),
+        ]);
+        let block = Block::bordered()
+            .title("Get Started")
+            .padding(Padding::horizontal(1))
+            .border_style(theme::border(true));
+        let inner = block.inner(box_area);
+        self.record_bold_keys(&line, inner);
+        frame.render_widget(Paragraph::new(line).block(block), box_area);
     }
 
     fn render_browser(&mut self, frame: &mut Frame) {
-        let error_height = if self.err.is_some() { 1 } else { 0 };
-
-        let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(error_height),
-            Constraint::Length(1),
-        ]));
-
-        if let Some(error) = &self.err {
-            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
-
-            frame.render_widget(message, error_area);
-        }
+        let help = match self.focused_pane {
+            BrowserPane::Projects => {
+                "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
+            }
+            BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
+                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+            }
+            BrowserPane::LatestUpdate => {
+                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+            }
+        };
+        let content_area = self.render_bottom_rows(frame, help);
 
         let [project_list_area, latest_update_area] = content_area.layout(&Layout::horizontal([
             Constraint::Percentage(20),
@@ -387,38 +318,17 @@ impl App {
 
         let git_summary = self.git_summary_line();
         if let Some(update) = self.displayed_update() {
-            let created_at_local_time = update.created_at.with_timezone(&Local);
-            let updated_at_local_time = update.updated_at.with_timezone(&Local);
-
-            let created_at_display = created_at_local_time.format("%d %b %Y, %H:%M").to_string();
-            let updated_at_display = updated_at_local_time.format("%d %b %Y, %H:%M").to_string();
-
-            let created_at_msg = vec!["Created at: ".into(), created_at_display.bold()];
-            let updated_at_msg = vec!["Updated at: ".into(), updated_at_display.bold()];
-
-            let mut text = Text::from(format!(
-                "Title: {}\nBody: {}\nWhat to do next: {}",
-                update.title, update.body, update.next,
-            ));
-            text.lines.extend([
-                Line::from(created_at_msg).style(theme::SECONDARY),
-                Line::from(updated_at_msg).style(theme::SECONDARY),
-            ]);
-            if let Some(written_on) =
-                format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
-            {
-                text.lines.push(
-                    Line::from(vec!["Written on: ".into(), written_on.bold()])
-                        .style(theme::SECONDARY),
-                );
-            }
-
-            let mut block =
-                Block::bordered()
-                    .title(update.title.as_str())
-                    .border_style(theme::border(
-                        self.focused_pane == BrowserPane::LatestUpdate,
-                    ));
+            let is_latest = self
+                .updates
+                .first()
+                .is_some_and(|latest| latest.id == update.id);
+            let text = update_text(update);
+            let mut block = Block::bordered()
+                .title(if is_latest { "Latest Update" } else { "Update" })
+                .padding(Padding::horizontal(1))
+                .border_style(theme::border(
+                    self.focused_pane == BrowserPane::LatestUpdate,
+                ));
             if let Some(git_summary) = git_summary {
                 block = block.title_top(git_summary);
             }
@@ -444,9 +354,9 @@ impl App {
             } else if self.updates.is_empty() {
                 let (msg, style) = (
                     vec![
-                        "There are currently no updates for this project, Press ".into(),
+                        "No updates yet. Press ".into(),
                         "a".bold(),
-                        " to create one!".into(),
+                        " to add one.".into(),
                     ],
                     Style::default(),
                 );
@@ -472,21 +382,6 @@ impl App {
                 frame.render_widget(project_message, latest_update_area);
             }
         }
-
-        let help = match self.focused_pane {
-            BrowserPane::Projects => {
-                "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
-            }
-            BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
-                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
-            }
-            BrowserPane::LatestUpdate => {
-                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
-            }
-        };
-        let help_message = Paragraph::new(help).style(theme::SECONDARY);
-        frame.render_widget(help_message, help_area);
-        self.record_hints(help, help_area, false);
     }
 
     fn git_summary_line(&self) -> Option<Line<'static>> {
@@ -516,67 +411,49 @@ impl App {
     }
 
     fn render_git_view(&mut self, frame: &mut Frame) {
-        let error_height = if self.err.is_some() { 1 } else { 0 };
-
-        let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(error_height),
-            Constraint::Length(1),
-        ]));
-
-        if let Some(error) = &self.err {
-            let message = Paragraph::new(error.as_str()).style(Style::default().fg(theme::ERROR));
-
-            frame.render_widget(message, error_area);
-        }
-
-        let [list_area, diff_area] = content_area.layout(&Layout::horizontal([
-            Constraint::Percentage(20),
-            Constraint::Percentage(80),
-        ]));
-        self.add_click(list_area, list_area, Click::Focus(ctrl('h')));
-        if self.git.diff.is_some() {
-            self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
-        }
+        let help = match self.git.focused_pane {
+            GitPane::List => {
+                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Backspace) back | (?) help | (q) quit"
+            }
+            GitPane::Diff => {
+                "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Backspace) back | (?) help | (q) quit"
+            }
+        };
+        let content_area = self.render_bottom_rows(frame, help);
 
         let list_focused = self.git.focused_pane == GitPane::List;
-        if let Some(branch) = &self.git.opened_branch {
-            let block = Block::bordered()
-                .title(format!("Commits · {branch}"))
-                .border_style(theme::border(list_focused));
-            if self.git.entries.is_empty() {
-                let message = Paragraph::new("No commits yet")
-                    .style(theme::SECONDARY)
-                    .block(block);
-                frame.render_widget(message, list_area);
-            } else {
-                let entries: Vec<ListItem<'_>> = self
-                    .git
+        // Room for a row at the widest the list gets: half the screen, less the "> " marker and borders.
+        let max_row_width = usize::from(content_area.width / 2).saturating_sub(4);
+        let (title, items, selection) = if let Some(branch) = &self.git.opened_branch {
+            let entries: Vec<ListItem<'_>> =
+                self.git
                     .entries
                     .iter()
                     .map(|entry| match entry {
                         GitEntry::Uncommitted => ListItem::new("Uncommitted changes")
                             .style(Style::new().fg(theme::ACCENT)),
-                        GitEntry::Commit(commit) => ListItem::new(Line::from(vec![
-                            Span::styled(commit.short_sha.as_str(), theme::SECONDARY),
-                            " ".into(),
-                            commit.subject.as_str().into(),
-                            Span::styled(
-                                format!(" · {}", format::relative_time(commit.time)),
-                                theme::SECONDARY,
-                            ),
-                        ])),
+                        GitEntry::Commit(commit) => {
+                            // Shorten the subject rather than lose the age off the end.
+                            let age = format!(" · {}", format::relative_time(commit.time));
+                            let subject_width = max_row_width.saturating_sub(
+                                Span::raw(commit.short_sha.as_str()).width()
+                                    + 1
+                                    + Span::raw(age.as_str()).width(),
+                            );
+                            ListItem::new(Line::from(vec![
+                                Span::styled(commit.short_sha.as_str(), theme::SECONDARY),
+                                " ".into(),
+                                truncate(&commit.subject, subject_width).into(),
+                                Span::styled(age, theme::SECONDARY),
+                            ]))
+                        }
                     })
                     .collect();
-                let list = List::new(entries).highlight_symbol("> ").block(block);
-                frame.render_stateful_widget(list, list_area, &mut self.git.entry_selection);
-                self.record_list_rows(
-                    list_area,
-                    self.git.entry_selection.offset(),
-                    self.git.entries.len(),
-                    Click::GitItem,
-                );
-            }
+            (
+                format!("Commits · {branch}"),
+                entries,
+                &mut self.git.entry_selection,
+            )
         } else {
             let branches: Vec<ListItem<'_>> = self
                 .git
@@ -600,19 +477,47 @@ impl App {
                     }
                 })
                 .collect();
-            let list = List::new(branches).highlight_symbol("> ").block(
-                Block::bordered()
-                    .title("Branches")
-                    .border_style(theme::border(list_focused)),
-            );
-            frame.render_stateful_widget(list, list_area, &mut self.git.branch_selection);
-            self.record_list_rows(
-                list_area,
-                self.git.branch_selection.offset(),
-                self.git.branches.len(),
-                Click::GitItem,
-            );
+            (
+                "Branches".to_string(),
+                branches,
+                &mut self.git.branch_selection,
+            )
+        };
+
+        // Fit the list to its widest row (plus the "> " marker and borders), from
+        // 30 columns up to half the screen, so subjects and ages aren't cut off.
+        let widest = items
+            .iter()
+            .map(ListItem::width)
+            .chain([Span::raw(title.as_str()).width()])
+            .max()
+            .unwrap_or(0);
+        let list_width = (widest as u16 + 4).max(30).min(content_area.width / 2);
+        let [list_area, diff_area] = content_area.layout(&Layout::horizontal([
+            Constraint::Length(list_width),
+            Constraint::Min(0),
+        ]));
+
+        let block = Block::bordered()
+            .title(title)
+            .border_style(theme::border(list_focused));
+        let len = items.len();
+        if items.is_empty() {
+            let message = Paragraph::new("No commits yet")
+                .style(theme::SECONDARY)
+                .block(block);
+            frame.render_widget(message, list_area);
+        } else {
+            let list = List::new(items).highlight_symbol("> ").block(block);
+            frame.render_stateful_widget(list, list_area, selection);
         }
+        let offset = selection.offset();
+
+        self.add_click(list_area, list_area, Click::Focus(ctrl('h')));
+        if self.git.diff.is_some() {
+            self.add_click(diff_area, diff_area, Click::Focus(ctrl('l')));
+        }
+        self.record_list_rows(list_area, offset, len, Click::GitItem);
 
         let diff_focused = self.git.focused_pane == GitPane::Diff;
         if let Some(diff) = &self.git.diff {
@@ -669,16 +574,34 @@ impl App {
                 );
             frame.render_widget(diff_message, diff_area);
         }
+    }
 
-        let help = match self.git.focused_pane {
-            GitPane::List => {
-                "(Enter) open | (j/k) select | (Ctrl+l) diff | (r) refresh | (Esc) back | (q) quit"
-            }
-            GitPane::Diff => "(j/k) scroll | (Ctrl+h) list | (r) refresh | (Esc) back | (q) quit",
-        };
-        let help_message = Paragraph::new(help).style(theme::SECONDARY);
-        frame.render_widget(help_message, help_area);
-        self.record_hints(help, help_area, false);
+    /// Draws the bottom of every page: the error row (when there's an error)
+    /// above the help row, which wraps onto more lines when it doesn't fit.
+    /// Returns the area left above them for the page.
+    fn render_bottom_rows(&mut self, frame: &mut Frame, hints: &str) -> Rect {
+        let help_lines = wrap_hints(hints, frame.area().width);
+        let [content_area, error_area, help_area] = frame.area().layout(&Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(u16::from(self.err.is_some())),
+            Constraint::Length(help_lines.len() as u16),
+        ]));
+
+        if let Some(error) = &self.err {
+            frame.render_widget(
+                Paragraph::new(error.as_str()).style(Style::new().fg(theme::ERROR)),
+                error_area,
+            );
+        }
+        for (row, line) in help_lines.iter().enumerate() {
+            let row_area = Rect::new(help_area.x, help_area.y + row as u16, help_area.width, 1);
+            frame.render_widget(
+                Paragraph::new(line.as_str()).style(theme::SECONDARY),
+                row_area,
+            );
+            self.record_hints(line, row_area);
+        }
+        content_area
     }
 
     fn render_delete_confirmation(&mut self, frame: &mut Frame) {
@@ -716,19 +639,14 @@ impl App {
             width,
             height,
         );
-        let keys = Line::from(vec![
-            "Enter".bold(),
-            ": delete    ".into(),
-            "Esc".bold(),
-            ": cancel".into(),
-        ]);
+        let keys = "(Enter) delete | (Esc) cancel";
         let message = Paragraph::new(vec![
             Line::from(name.bold()),
             Line::from(""),
             Line::from(description),
             Line::from(note),
             Line::from(""),
-            keys.clone(),
+            Line::from(keys).style(theme::SECONDARY),
         ])
         .style(theme::BASE)
         .block(
@@ -739,7 +657,7 @@ impl App {
 
         frame.render_widget(Clear, popup);
         frame.render_widget(message, popup);
-        self.record_popup_keys(&keys, popup);
+        self.record_popup_keys(keys, popup);
     }
 
     fn render_update_popup(&mut self, frame: &mut Frame) {
@@ -756,21 +674,14 @@ impl App {
             width,
             height,
         );
-        let keys = Line::from(vec![
-            "i".bold(),
-            ": install    ".into(),
-            "Esc".bold(),
-            ": later    ".into(),
-            "n".bold(),
-            ": don't remind me".into(),
-        ]);
+        let keys = "(i) install | (Esc) later | (n) don't remind me";
         let message = Paragraph::new(vec![
             Line::from(format!("Trail {} is available", release.tag_name).bold()),
             Line::from(""),
             Line::from(format!("You are on v{}.", env!("CARGO_PKG_VERSION"))),
             Line::from("Installing will close Trail."),
             Line::from(""),
-            keys.clone(),
+            Line::from(keys).style(theme::SECONDARY),
         ])
         .style(theme::BASE)
         .block(
@@ -781,88 +692,107 @@ impl App {
 
         frame.render_widget(Clear, popup);
         frame.render_widget(message, popup);
-        self.record_popup_keys(&keys, popup);
+        self.record_popup_keys(keys, popup);
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+        // The focused section gets the room: the preview takes most of it while it's being read.
+        let preview_focused = self.table_pane == TablePane::Preview;
+        let table_share = if preview_focused { 30 } else { 50 };
+        let [table_area, preview_area] = area.layout(&Layout::vertical([
+            Constraint::Percentage(table_share),
+            Constraint::Percentage(100 - table_share),
+        ]));
+        self.add_click(table_area, table_area, Click::Focus(ctrl('k')));
+        self.add_click(preview_area, preview_area, Click::Focus(ctrl('j')));
+        let table_block = Block::bordered()
+            .title("Updates")
+            .border_style(theme::border(!preview_focused));
+        let preview_block = Block::bordered()
+            .title("Preview")
+            .padding(Padding::horizontal(1))
+            .border_style(theme::border(preview_focused));
+        let table_inner = table_block.inner(table_area);
+        let preview_inner = preview_block.inner(preview_area);
+        frame.render_widget(table_block, table_area);
+        frame.render_widget(preview_block, preview_area);
+
         if self.updates.is_empty() {
             frame.render_widget(
                 Paragraph::new("No updates are available for this project.")
                     .style(theme::SECONDARY),
-                area,
+                table_inner,
             );
             return;
         }
 
-        let [table_area, scrollbar_area] = area.layout(&Layout::horizontal([
+        let [rows_area, scrollbar_area] = table_inner.layout(&Layout::horizontal([
             Constraint::Min(0),
             Constraint::Length(1),
         ]));
-        let visible_rows = usize::from(table_area.height.saturating_sub(1) / UPDATE_ROW_HEIGHT);
+        let visible_rows = usize::from(rows_area.height.saturating_sub(1));
         let max_offset = self.updates.len().saturating_sub(visible_rows);
         *self.update_selection.offset_mut() = self.update_selection.offset().min(max_offset);
 
-        let header = ["Title", "Body", "Next", "Created At", "Updated At"]
+        let header = ["Title", "Body", "Next", "Created", "Edited"]
             .into_iter()
-            .enumerate()
-            .map(|(column, title)| {
-                Cell::from(title).style(
-                    if self.update_selection.selected_column() == Some(column) {
-                        theme::CELL
-                    } else {
-                        theme::HEADING
-                    },
-                )
-            })
-            .collect::<Row>()
-            .height(1);
-        let rows = self.updates.iter().map(|data| {
-            [
-                Cell::from(format!("\n{}\n", data.title)),
-                Cell::from(format!("\n{}\n", data.body)),
-                Cell::from(format!("\n{}\n", data.next)),
-                Cell::from(format!("\n{}\n", data.created_at)),
-                Cell::from(format!("\n{}\n", data.updated_at)),
-            ]
-            .into_iter()
-            .collect::<Row>()
-            .style(Style::new())
-            .height(UPDATE_ROW_HEIGHT)
+            .map(|title| Cell::from(title).style(theme::HEADING))
+            .collect::<Row>();
+        let first_line = |text: &str| text.lines().next().unwrap_or_default().to_string();
+        let rows = self.updates.iter().map(|update| {
+            Row::new([
+                Cell::from(update.title.clone()),
+                Cell::from(first_line(&update.body)),
+                Cell::from(first_line(&update.next)),
+                Cell::from(format::relative_time(update.created_at)).style(theme::SECONDARY),
+                Cell::from(if update.updated_at > update.created_at {
+                    format::relative_time(update.updated_at)
+                } else {
+                    String::new()
+                })
+                .style(theme::SECONDARY),
+            ])
         });
-        let bar = " █ ";
-        let t = Table::new(
+        let table = Table::new(
             rows,
             [
-                Constraint::Percentage(20),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
+                Constraint::Fill(3),
+                Constraint::Fill(4),
+                Constraint::Fill(3),
+                Constraint::Length(9),
+                Constraint::Length(9),
             ],
         )
         .header(header)
+        .column_spacing(2)
         .row_highlight_style(theme::ROW)
-        .column_highlight_style(theme::COLUMN)
-        .cell_highlight_style(theme::CELL)
-        .highlight_symbol(Text::from(vec![
-            "".into(),
-            bar.into(),
-            bar.into(),
-            "".into(),
-        ]))
+        .highlight_symbol("> ")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
-        frame.render_stateful_widget(t, table_area, &mut self.update_selection);
+        frame.render_stateful_widget(table, rows_area, &mut self.update_selection);
         let offset = self.update_selection.offset();
-        for row in 0..=visible_rows {
+        for row in 0..visible_rows {
             let index = offset + row;
             if index >= self.updates.len() {
                 break;
             }
-            let y = table_area.y + 1 + row as u16 * UPDATE_ROW_HEIGHT;
+            let y = rows_area.y + 1 + row as u16;
             self.add_click(
-                Rect::new(table_area.x, y, table_area.width, UPDATE_ROW_HEIGHT),
-                table_area,
+                Rect::new(rows_area.x, y, rows_area.width, 1),
+                rows_area,
                 Click::Update(index),
+            );
+        }
+
+        if let Some(update) = self
+            .update_selection
+            .selected()
+            .and_then(|index| self.updates.get(index))
+        {
+            render_scrolled(
+                frame,
+                update_text(update),
+                preview_inner,
+                &mut self.preview_scroll,
             );
         }
 
@@ -889,29 +819,13 @@ impl App {
         );
     }
 
-    fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
-        let info_footer = Paragraph::new(self.err.as_deref().unwrap_or(INFO_TEXT[0]))
-            .style(if self.err.is_some() {
-                Style::new().fg(theme::ERROR)
-            } else {
-                theme::SECONDARY
-            })
-            .centered()
-            .block(Block::bordered().border_style(theme::border(false)));
-
-        frame.render_widget(info_footer, area);
-        if self.err.is_none() {
-            self.record_hints(INFO_TEXT[0], area.inner(Margin::new(1, 1)), true);
-        }
-    }
-
     fn render_help_window(&mut self, frame: &mut Frame) {
         let help = Text::from(vec![
             Line::from("Browser").style(theme::HEADING),
             Line::from("A: new project"),
-            Line::from("?: help"),
             Line::from("q: quit"),
             Line::from("j / Down, k / Up: select a project (Projects focused)"),
+            Line::from("g / G: first / last project (Projects focused)"),
             Line::from("Enter: open selected project (Projects focused)"),
             Line::from("Ctrl+h: focus Projects"),
             Line::from("Ctrl+l: focus Latest Update"),
@@ -919,26 +833,31 @@ impl App {
             Line::from("a: new update"),
             Line::from("e: edit displayed update (Latest Update focused)"),
             Line::from("j/k or Up/Down: scroll update details"),
+            Line::from("G: scroll to the end of the update (Latest Update focused)"),
             Line::from("u: update table (requires an open project)"),
-            Line::from("g: git view (requires an open git project)"),
+            Line::from("g: git view (Latest Update focused, requires a git project)"),
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
-            Line::from("h / Left, l / Right: select column"),
+            Line::from("g / G: first / last update"),
+            Line::from("Ctrl+j: focus Preview (j/k then scroll it)"),
+            Line::from("Ctrl+k: focus Updates"),
             Line::from("Enter: open selected update"),
             Line::from("d: delete selected update"),
             Line::from("e: edit selected update"),
-            Line::from("Esc: return"),
+            Line::from("Backspace: back"),
             Line::from("q: quit"),
             Line::from(""),
             Line::from("Git view").style(theme::HEADING),
             Line::from("j / Down, k / Up: select a branch or commit (list focused)"),
+            Line::from("g / G: first / last branch or commit (list focused)"),
             Line::from("Enter: open branch commits / show commit diff"),
             Line::from("j/k or Up/Down: scroll diff (diff focused)"),
+            Line::from("g / G: top / end of diff (diff focused)"),
             Line::from("Ctrl+h: focus list"),
             Line::from("Ctrl+l: focus diff"),
             Line::from("r: refresh"),
-            Line::from("Esc: back (diff, commits, branches, close)"),
+            Line::from("Backspace: back (diff, commits, branches, close)"),
             Line::from("q: quit"),
             Line::from(""),
             Line::from("Project and update forms").style(theme::HEADING),
@@ -962,25 +881,100 @@ impl App {
             Line::from("Scroll: scroll or move the selection in the pane under the cursor"),
             Line::from(""),
             Line::from("Help").style(theme::HEADING),
+            Line::from("?: open help from any page except the project and update forms"),
             Line::from("j/k or Up/Down: scroll"),
             Line::from("PgUp/PgDn, Home/End: scroll details, confirmation, diff or help"),
-            Line::from("Esc / ?: return"),
+            Line::from("g / G: top / end"),
+            Line::from("Backspace / ?: close, back to where you opened it"),
             Line::from("q: quit"),
         ]);
-        let title = "Trail keybindings | j/k: scroll | Esc: close";
-        let block = Block::bordered()
-            .title(title)
-            .border_style(theme::border(true));
-        let area = frame.area();
-        self.record_hints(
-            title,
-            Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1),
-            false,
+        let window_area = self.render_bottom_rows(
+            frame,
+            "(j/k) scroll | (g/G) top/end | (Backspace) close | (q) quit",
         );
-        let inner = block.inner(frame.area());
-        frame.render_widget(block, frame.area());
+        let block = Block::bordered()
+            .title("Trail keybindings")
+            .border_style(theme::border(true));
+        let inner = block.inner(window_area);
+        frame.render_widget(block, window_area);
         render_scrolled(frame, help, inner, &mut self.help_scroll);
     }
+}
+
+/// Shortens `text` to `width` cells, ending in `…` when it's cut. Text that
+/// fits, or a `width` too small to hold anything but `…`, leaves it whole.
+fn truncate(text: &str, width: usize) -> String {
+    if width < 2 || Span::raw(text).width() <= width {
+        return text.to_string();
+    }
+    let mut shortened = String::new();
+    let mut used = 0;
+    for grapheme in Span::raw(text).styled_graphemes(Style::default()) {
+        let cell_width = Span::raw(grapheme.symbol).width();
+        if used + cell_width + 1 > width {
+            break;
+        }
+        shortened.push_str(grapheme.symbol);
+        used += cell_width;
+    }
+    shortened.push('…');
+    shortened
+}
+
+/// Splits a ` | `-separated help row into lines that fit in `width`, breaking
+/// only between hints. A hint wider than `width` gets a line of its own.
+fn wrap_hints(text: &str, width: u16) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for hint in text.split(" | ") {
+        match lines.last_mut() {
+            Some(line)
+                if Span::raw(line.as_str()).width() + 3 + Span::raw(hint).width()
+                    <= usize::from(width) =>
+            {
+                line.push_str(" | ");
+                line.push_str(hint);
+            }
+            _ => lines.push(hint.to_string()),
+        }
+    }
+    lines
+}
+
+/// An update as people read it: title, when and where it was written, the
+/// body, and what to do next.
+fn update_text(update: &Update) -> Text<'static> {
+    let date = |time: DateTime<Utc>| {
+        let local = time.with_timezone(&Local).format("%d %b %Y, %H:%M");
+        format!("{} ({local})", format::relative_time(time))
+    };
+    let mut written = vec![date(update.created_at)];
+    if update.updated_at > update.created_at {
+        written.push(format!("edited {}", date(update.updated_at)));
+    }
+    if let Some(written_on) =
+        format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
+    {
+        written.push(format!("written on {written_on}"));
+    }
+
+    update_lines(
+        &update.title,
+        Some(written.join(" · ")),
+        &update.body,
+        &update.next,
+    )
+}
+
+/// The layout `update_text` uses, also for drafts, which have no `written` line yet.
+fn update_lines(title: &str, written: Option<String>, body: &str, next: &str) -> Text<'static> {
+    let mut lines =
+        vec![Line::from(title.to_string()).style(Style::new().fg(theme::BRIGHT).bold())];
+    lines.extend(written.map(|written| Line::from(written).style(theme::SECONDARY)));
+    lines.push(Line::from(""));
+    lines.extend(body.lines().map(|line| Line::from(line.to_string())));
+    lines.extend([Line::from(""), Line::from("Next").style(theme::HEADING)]);
+    lines.extend(next.lines().map(|line| Line::from(line.to_string())));
+    Text::from(lines)
 }
 
 fn diff_line(line: &str) -> Line<'static> {
@@ -994,7 +988,7 @@ fn diff_line(line: &str) -> Line<'static> {
         } else if line.starts_with('-') {
             Style::new().fg(theme::REMOVED)
         } else {
-            Style::default()
+            theme::SECONDARY
         };
     // Tabs have no cell width, so expand them before wrapping.
     Line::from(line.replace('\t', "    ")).style(style)
