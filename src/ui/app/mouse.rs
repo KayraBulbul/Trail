@@ -98,27 +98,19 @@ impl App {
         self.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE), text_in, conn)
     }
 
-    /// Makes each hint in a help row clickable. `text` is drawn on the row of
-    /// `area`, centered or from its left edge. Hints are separated by ` | ` and
-    /// look like `(Enter) open` or `Enter: continue`; hints for several keys
-    /// (`j/k`) aren't clickable.
-    pub(super) fn record_hints(&mut self, text: &str, area: Rect, centered: bool) {
-        let width = Span::raw(text).width() as u16;
-        let mut x = area.x
-            + if centered {
-                area.width.saturating_sub(width) / 2
-            } else {
-                0
-            };
+    /// Makes each hint in a help row clickable. `text` is drawn from the left
+    /// edge of `area`'s row. Hints are separated by ` | ` and look like
+    /// `(Enter) open`; hints for several keys (`j/k`) aren't clickable.
+    pub(super) fn record_hints(&mut self, text: &str, area: Rect) {
+        let mut x = area.x;
         for (i, hint) in text.split(" | ").enumerate() {
             if i > 0 {
                 x += 3;
             }
             let hint_width = Span::raw(hint).width() as u16;
-            let label = match hint.strip_prefix('(') {
-                Some(rest) => rest.split(')').next(),
-                None => hint.split(": ").next().filter(|_| hint.contains(": ")),
-            };
+            let label = hint
+                .strip_prefix('(')
+                .and_then(|rest| rest.split(')').next());
             if let Some(key) = label.and_then(parse_key) {
                 self.add_click(Rect::new(x, area.y, hint_width, 1), area, Click::Key(key));
             }
@@ -126,7 +118,7 @@ impl App {
         }
     }
 
-    /// Makes the bold key words in a prompt line (`Press Esc to abort`) clickable.
+    /// Makes the bold key words in a prompt line (`Press A to add one`) clickable.
     /// `line` is drawn from the left edge of `area`'s row.
     pub(super) fn record_bold_keys(&mut self, line: &Line, area: Rect) {
         let mut x = area.x;
@@ -141,13 +133,13 @@ impl App {
         }
     }
 
-    /// Makes a popup's key line clickable, and only it: the popup covers
+    /// Makes a popup's hint line clickable, and only it: the popup covers
     /// everything else. `keys` is the sixth line inside the popup's border.
-    pub(super) fn record_popup_keys(&mut self, keys: &Line, popup: Rect) {
+    pub(super) fn record_popup_keys(&mut self, keys: &str, popup: Rect) {
         self.clicks.clear();
         let inner = popup.inner(Margin::new(1, 1));
         if inner.height > 5 {
-            self.record_bold_keys(keys, Rect::new(inner.x, inner.y + 5, inner.width, 1));
+            self.record_hints(keys, Rect::new(inner.x, inner.y + 5, inner.width, 1));
         }
     }
 

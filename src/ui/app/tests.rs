@@ -1269,7 +1269,7 @@ fn confirmation_scrolling_preserves_the_draft_and_allows_saving() {
     assert!(rendered_text(&mut app, &mut input, 80, 16).contains("NEXT_STEP"));
     press(&mut app, &mut input, &conn, KeyCode::Home);
     press(&mut app, &mut input, &conn, KeyCode::Up);
-    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Title: Scrollable"));
+    assert!(rendered_text(&mut app, &mut input, 80, 16).contains("Scrollable"));
     assert_eq!(input.update.body.as_deref(), Some(body.as_str()));
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     let updates = sqlite::get_updates(&conn, "a").unwrap();
@@ -1565,12 +1565,17 @@ fn clicking_a_hint_presses_its_key_but_multi_key_hints_do_nothing() {
 
     click(&mut app, &mut input, &conn, "(A) new");
     assert!(app.show_project_input);
-    click(&mut app, &mut input, &conn, "Esc: cancel");
+    click(&mut app, &mut input, &conn, "(Esc) cancel");
     assert!(!app.show_project_input);
 
     press(&mut app, &mut input, &conn, KeyCode::Char('?'));
     click(&mut app, &mut input, &conn, "(Esc) close");
     assert!(!app.show_help);
+
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    click(&mut app, &mut input, &conn, "(Esc) back");
+    assert!(!app.show_update_table);
 }
 
 #[test]
@@ -1599,11 +1604,11 @@ fn popup_keys_are_clickable_and_the_screen_behind_it_is_not() {
 
     click(&mut app, &mut input, &conn, "Beta");
     assert_eq!(app.opened_project_id.as_deref(), Some("a"));
-    click(&mut app, &mut input, &conn, "Esc");
+    click(&mut app, &mut input, &conn, "(Esc) cancel");
     assert!(app.pending_project_delete_id.is_none());
 
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
-    click(&mut app, &mut input, &conn, "Enter");
+    click(&mut app, &mut input, &conn, "(Enter) delete");
     assert_eq!(sqlite::get_projects(&conn).unwrap().len(), 1);
 }
 
