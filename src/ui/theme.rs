@@ -15,7 +15,6 @@ pub const BASE: Style = Style::new().fg(TEXT).bg(BACKGROUND);
 pub const SECONDARY: Style = Style::new().fg(MUTED);
 pub const HEADING: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 pub const ROW: Style = Style::new().bg(Color::Rgb(0x48, 0x34, 0x2F));
-pub const COLUMN: Style = Style::new().bg(Color::Rgb(0x26, 0x25, 0x2B));
 pub const CELL: Style = Style::new()
     .fg(BACKGROUND)
     .bg(ACCENT)

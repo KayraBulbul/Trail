@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 const INFO_TEXT: [&str; 1] =
-    ["(Esc) return | (Enter) open | (j/k) row | (h/l) column | (d) delete | (e) edit | (q) quit"];
+    ["(Esc) return | (Enter) open | (j/k) row | (d) delete | (e) edit | (q) quit"];
 const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
@@ -804,16 +804,7 @@ impl App {
 
         let header = ["Title", "Body", "Next", "Created At", "Updated At"]
             .into_iter()
-            .enumerate()
-            .map(|(column, title)| {
-                Cell::from(title).style(
-                    if self.update_selection.selected_column() == Some(column) {
-                        theme::CELL
-                    } else {
-                        theme::HEADING
-                    },
-                )
-            })
+            .map(|title| Cell::from(title).style(theme::HEADING))
             .collect::<Row>()
             .height(1);
         let rows = self.updates.iter().map(|data| {
@@ -842,8 +833,6 @@ impl App {
         )
         .header(header)
         .row_highlight_style(theme::ROW)
-        .column_highlight_style(theme::COLUMN)
-        .cell_highlight_style(theme::CELL)
         .highlight_symbol(Text::from(vec![
             "".into(),
             bar.into(),
@@ -924,7 +913,6 @@ impl App {
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
-            Line::from("h / Left, l / Right: select column"),
             Line::from("Enter: open selected update"),
             Line::from("d: delete selected update"),
             Line::from("e: edit selected update"),

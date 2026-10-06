@@ -288,21 +288,6 @@ impl App {
                             .saturating_sub(1);
                         self.update_selection.select(Some(index));
                     }
-                    KeyCode::Char('h') | KeyCode::Left if !self.updates.is_empty() => {
-                        let column = self
-                            .update_selection
-                            .selected_column()
-                            .unwrap_or(0)
-                            .saturating_sub(1);
-                        self.update_selection.select_column(Some(column));
-                    }
-                    KeyCode::Char('l') | KeyCode::Right if !self.updates.is_empty() => {
-                        let column = match self.update_selection.selected_column() {
-                            Some(column) => (column + 1).min(4),
-                            None => 0,
-                        };
-                        self.update_selection.select_column(Some(column));
-                    }
                     KeyCode::Enter => {
                         if let Some(update) = self
                             .update_selection

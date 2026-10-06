@@ -854,45 +854,16 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
 }
 
 #[test]
-fn update_table_column_selection_stops_at_the_edges() {
-    let (mut app, mut input, conn) = browser_with_updates();
-    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    assert!(app.show_update_table);
-    for (key, expected) in [
-        (KeyCode::Left, 0),
-        (KeyCode::Char('l'), 1),
-        (KeyCode::Right, 2),
-        (KeyCode::Right, 3),
-        (KeyCode::Right, 4),
-        (KeyCode::Right, 4),
-        (KeyCode::Char('h'), 3),
-    ] {
-        press(&mut app, &mut input, &conn, key);
-        assert_eq!(app.update_selection.selected_column(), Some(expected));
-    }
-    press(&mut app, &mut input, &conn, KeyCode::Esc);
-    assert!(!app.show_update_table);
-    assert!(!app.exit);
-}
-
-#[test]
 fn update_table_empty_navigation_and_quit() {
     let (mut app, mut input, conn) = browser();
     seed_projects(&conn);
     app.reload_projects(&conn).unwrap();
     press(&mut app, &mut input, &conn, KeyCode::Enter);
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
-    for key in [
-        KeyCode::Up,
-        KeyCode::Down,
-        KeyCode::Left,
-        KeyCode::Right,
-        KeyCode::Enter,
-    ] {
+    for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter] {
         press(&mut app, &mut input, &conn, key);
         assert!(app.show_update_table);
         assert_eq!(app.update_selection.selected(), None);
-        assert_eq!(app.update_selection.selected_column(), None);
         assert!(app.opened_update_id.is_none());
     }
     press(&mut app, &mut input, &conn, KeyCode::Char('q'));
@@ -1044,7 +1015,6 @@ fn confirmed_update_delete_uses_original_id_and_handles_last_update() {
     assert!(app.updates.is_empty());
     assert!(sqlite::get_updates(&conn, "a").unwrap().is_empty());
     assert_eq!(app.update_selection.selected(), None);
-    assert_eq!(app.update_selection.selected_column(), None);
     assert_eq!(app.opened_project_id.as_deref(), Some("a"));
     press(&mut app, &mut input, &conn, KeyCode::Char('d'));
     assert!(app.pending_update_delete_id.is_none());
