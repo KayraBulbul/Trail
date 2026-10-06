@@ -1221,7 +1221,7 @@ fn open_and_close_help(app: &mut App, input: &mut Input, conn: &Connection, key:
 }
 
 #[test]
-fn help_opens_from_any_page_and_backspace_returns_there() {
+fn help_opens_over_pages_and_popups_but_not_forms() {
     let (mut app, mut input, conn) = browser_with_updates();
 
     press(&mut app, &mut input, &conn, KeyCode::Char('u'));
@@ -1270,6 +1270,7 @@ fn help_is_visible_without_projects_and_its_contents_are_reachable() {
 #[test]
 fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
     let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[0].title = "TOP_TITLE".into();
     app.updates[0].body = format!("{}\nBODY_END", "界abc".repeat(300));
     app.updates[0].next = "NEXT_STEP".into();
     for (width, height) in [(80, 24), (40, 12)] {
@@ -1277,10 +1278,11 @@ fn scrolling_reaches_long_update_text_and_resets_when_opening_another_update() {
         let text = rendered_text(&mut app, &mut input, width, height);
         assert!(text.contains("BODY_END"));
         assert!(text.contains("NEXT_STEP"));
+        assert!(!text.contains("TOP_TITLE"));
         press(&mut app, &mut input, &conn, KeyCode::PageDown);
         assert!(rendered_text(&mut app, &mut input, width, height).contains("NEXT_STEP"));
         press(&mut app, &mut input, &conn, KeyCode::Home);
-        assert!(rendered_text(&mut app, &mut input, width, height).contains("│ Latest "));
+        assert!(rendered_text(&mut app, &mut input, width, height).contains("TOP_TITLE"));
     }
     press(&mut app, &mut input, &conn, KeyCode::Char('j'));
     assert!(app.detail_scroll > 0);
