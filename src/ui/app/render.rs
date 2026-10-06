@@ -22,7 +22,6 @@ use ratatui::{
 
 const INFO_TEXT: &str =
     "(Esc) return | (Enter) open | (j/k) row | (d) delete | (e) edit | (q) quit";
-const UPDATE_ROW_HEIGHT: u16 = 4;
 
 impl App {
     pub(super) fn render(&mut self, frame: &mut Frame, text_in: &mut input::Input) {
@@ -791,74 +790,93 @@ impl App {
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+        let [table_area, preview_area] = area.layout(&Layout::vertical([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ]));
+        let table_block = Block::bordered()
+            .title("Updates")
+            .border_style(theme::border(true));
+        let preview_block = Block::bordered()
+            .title("Preview")
+            .padding(Padding::horizontal(1))
+            .border_style(theme::border(false));
+        let table_inner = table_block.inner(table_area);
+        let preview_inner = preview_block.inner(preview_area);
+        frame.render_widget(table_block, table_area);
+        frame.render_widget(preview_block, preview_area);
+
         if self.updates.is_empty() {
             frame.render_widget(
                 Paragraph::new("No updates are available for this project.")
                     .style(theme::SECONDARY),
-                area,
+                table_inner,
             );
             return;
         }
 
-        let [table_area, scrollbar_area] = area.layout(&Layout::horizontal([
+        let [rows_area, scrollbar_area] = table_inner.layout(&Layout::horizontal([
             Constraint::Min(0),
             Constraint::Length(1),
         ]));
-        let visible_rows = usize::from(table_area.height.saturating_sub(1) / UPDATE_ROW_HEIGHT);
+        let visible_rows = usize::from(rows_area.height.saturating_sub(1));
         let max_offset = self.updates.len().saturating_sub(visible_rows);
         *self.update_selection.offset_mut() = self.update_selection.offset().min(max_offset);
 
-        let header = ["Title", "Body", "Next", "Created At", "Updated At"]
+        let header = ["Title", "Body", "Next", "Created", "Edited"]
             .into_iter()
             .map(|title| Cell::from(title).style(theme::HEADING))
-            .collect::<Row>()
-            .height(1);
-        let rows = self.updates.iter().map(|data| {
-            [
-                Cell::from(format!("\n{}\n", data.title)),
-                Cell::from(format!("\n{}\n", data.body)),
-                Cell::from(format!("\n{}\n", data.next)),
-                Cell::from(format!("\n{}\n", data.created_at)),
-                Cell::from(format!("\n{}\n", data.updated_at)),
-            ]
-            .into_iter()
-            .collect::<Row>()
-            .style(Style::new())
-            .height(UPDATE_ROW_HEIGHT)
+            .collect::<Row>();
+        let first_line = |text: &str| text.lines().next().unwrap_or_default().to_string();
+        let rows = self.updates.iter().map(|update| {
+            Row::new([
+                Cell::from(update.title.clone()),
+                Cell::from(first_line(&update.body)),
+                Cell::from(first_line(&update.next)),
+                Cell::from(format::relative_time(update.created_at)).style(theme::SECONDARY),
+                Cell::from(if update.updated_at > update.created_at {
+                    format::relative_time(update.updated_at)
+                } else {
+                    String::new()
+                })
+                .style(theme::SECONDARY),
+            ])
         });
-        let bar = " █ ";
-        let t = Table::new(
+        let table = Table::new(
             rows,
             [
-                Constraint::Percentage(20),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
+                Constraint::Fill(3),
+                Constraint::Fill(4),
+                Constraint::Fill(3),
+                Constraint::Length(9),
+                Constraint::Length(9),
             ],
         )
         .header(header)
         .row_highlight_style(theme::ROW)
-        .highlight_symbol(Text::from(vec![
-            "".into(),
-            bar.into(),
-            bar.into(),
-            "".into(),
-        ]))
+        .highlight_symbol("> ")
         .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
-        frame.render_stateful_widget(t, table_area, &mut self.update_selection);
+        frame.render_stateful_widget(table, rows_area, &mut self.update_selection);
         let offset = self.update_selection.offset();
-        for row in 0..=visible_rows {
+        for row in 0..visible_rows {
             let index = offset + row;
             if index >= self.updates.len() {
                 break;
             }
-            let y = table_area.y + 1 + row as u16 * UPDATE_ROW_HEIGHT;
+            let y = rows_area.y + 1 + row as u16;
             self.add_click(
-                Rect::new(table_area.x, y, table_area.width, UPDATE_ROW_HEIGHT),
-                table_area,
+                Rect::new(rows_area.x, y, rows_area.width, 1),
+                rows_area,
                 Click::Update(index),
             );
+        }
+
+        if let Some(update) = self
+            .update_selection
+            .selected()
+            .and_then(|index| self.updates.get(index))
+        {
+            render_scrolled(frame, update_text(update), preview_inner, &mut 0);
         }
 
         let [_, scrollbar_area] = scrollbar_area.layout(&Layout::vertical([

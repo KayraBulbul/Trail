@@ -858,6 +858,20 @@ fn update_navigation_uses_update_count_and_stops_at_boundaries() {
 }
 
 #[test]
+fn update_table_previews_the_selected_update() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    app.updates[1].body = "Older body\nOLDER_SECOND_LINE".into();
+    press(&mut app, &mut input, &conn, KeyCode::Char('u'));
+    assert!(!rendered_text(&mut app, &mut input, 120, 24).contains("OLDER_SECOND_LINE"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Down);
+
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("Preview"));
+    assert!(text.contains("OLDER_SECOND_LINE"));
+}
+
+#[test]
 fn update_table_empty_navigation_and_quit() {
     let (mut app, mut input, conn) = browser();
     seed_projects(&conn);
