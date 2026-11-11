@@ -1,6 +1,6 @@
 # Trail
 
-Trail keeps a log of where you left off on each of your projects: what you did, and what to do next.
+Trail keeps a log of where you left off on each of your projects: what you did, what to do next, and a plan of the work still left.
 
 Your AI coding agents (Claude Code, Codex, ...) read and write the same log from the command line. Switch from one agent to another, or come back to a project after a week, and the context is already there. No re-explaining, no ever-growing markdown file. You read the history in a terminal UI, one place for all your projects.
 
@@ -30,6 +30,8 @@ Run `trail` to open the TUI.
 
 The Latest Update pane always shows the newest update. Press `u` to see all of them, and `?` for every key.
 
+Under it, the Plan pane lists the work still to do, which stays put from one update to the next. Press `Ctrl+j` to focus it, `a` to add an item, and `x` when one is done (`X` drops it instead). Done and dropped items are kept: `c` shows them, and `r` reopens one. `J` / `K` move an item down or up.
+
 | Key | Action |
 | --- | --- |
 | `A` | New project |
@@ -40,11 +42,14 @@ The Latest Update pane always shows the newest update. Press `u` to see all of t
 | `g` | Git view (git projects only, from the Latest Update pane) |
 | `g` / `G` | First / last item in a list, or top / end of the text |
 | `Backspace` | Go back (from the update table, the git view or help) |
-| `d` | Delete the selected project or update |
+| `d` | Delete the selected project, update or plan item |
 | `j` / `k` | Move or scroll |
 | `Ctrl+h` / `Ctrl+l` | Focus Projects / Latest Update |
-| `Ctrl+j` / `Ctrl+k` | In the update table, focus the Preview to scroll it / go back to the table |
-| `?` | Help, from any page except the project and update forms. `Backspace` closes it |
+| `Ctrl+j` / `Ctrl+k` | Focus the Plan / go back to Latest Update. In the update table, focus the Preview to scroll it / go back to the table |
+| `x` / `X` / `r` | Mark the selected plan item done / dropped, or reopen it |
+| `J` / `K` | Move the selected plan item down / up |
+| `c` | Show or hide done and dropped plan items |
+| `?` | Help, from any page except the forms. `Backspace` closes it |
 | `q` | Quit |
 
 You can also use the mouse. Click a project (or a branch or commit in the git view) to open it, click a pane to focus it, and scroll to move through whatever is under the cursor. Every key shown in the help row at the bottom, and in prompts and popups, can be clicked instead of pressed. In the update table, the first click selects a row and the second opens it.
@@ -53,13 +58,13 @@ Mouse support captures clicks, so to select text in the terminal, hold `Shift` w
 
 ## Using Trail with AI agents
 
-Agents forget everything between sessions. Add Trail's instructions to your project's `AGENTS.md` or `CLAUDE.md`, and the agent will check `trail status` when it starts and record an update when it finishes:
+Agents forget everything between sessions. Add Trail's instructions to your project's `AGENTS.md` or `CLAUDE.md`, and the agent will check `trail status` when it starts, work from the plan, and record an update when it finishes, marking the plan items it finished:
 
 ```sh
 trail agents >> AGENTS.md
 ```
 
-The instructions tell the agent to never edit or delete updates. That stays in the TUI, with you.
+The instructions tell the agent to never edit or delete updates, and to keep the plan to real pieces of work rather than small TODOs. Agents can add, finish and drop plan items, but editing and deleting them stays in the TUI, with you.
 
 If the folder isn't a Trail project yet, run `trail init` in it (or add it in the TUI).
 
@@ -81,7 +86,7 @@ command = "trail"
 args = ["mcp"]
 ```
 
-The agent gets four tools: `trail_status`, `trail_log`, `trail_add` and `trail_projects`. They work like the commands below and return the same JSON as `--json`. There are no tools to create projects or to edit or delete updates.
+The agent gets six tools: `trail_status`, `trail_log`, `trail_add`, `trail_plan`, `trail_plan_edit` and `trail_projects`. They work like the commands below and return the same JSON as `--json`. There are no tools to create projects or to edit or delete updates and plan items.
 
 ## Command line
 
@@ -89,16 +94,20 @@ The commands below work from a project's folder (or any subfolder).
 
 | Command | What it does |
 | --- | --- |
-| `trail status` | The project for this folder, its git state, and the latest update |
+| `trail status` | The project for this folder, its git state, the latest update, and the open plan |
 | `trail log [-n 5]` | The most recent updates, newest first |
-| `trail add --title "..." --body "..." [--next "..."]` | Write an update. Records the current git branch and commit. Use `--body -` to read the body from stdin |
+| `trail add --title "..." --body "..." [--next "..."] [--done 3,5]` | Write an update. Records the current git branch and commit. Use `--body -` to read the body from stdin. `--done` marks those plan items done by this update |
+| `trail plan [--all]` | The open plan items, in order. `--all` includes done and dropped ones |
+| `trail plan add "..." ["..."]` | Add items to the end of the plan |
+| `trail plan done <id>...` / `trail plan drop <id>...` | Mark items done, or drop them |
 | `trail projects` | List all projects |
 | `trail init [--name ...]` | Make the current folder a project (named after the folder by default) |
 | `trail agents` | Print instructions for AI agents |
 | `trail mcp` | Run an MCP server for AI agents (see above) |
 | `trail update` | Install the latest version |
 
-- `-p <name>` on `status`, `log` and `add` picks a project by name instead of by folder.
+- `-p <name>` on `status`, `log`, `add` and `plan` picks a project by name instead of by folder.
+- `plan add`, `plan done`, `plan drop` and `add --done` change nothing if any item or id is wrong (empty, unknown, already closed, or from another project).
 - `--json` on any command prints JSON instead of text. Missing values are `null`.
 - If a folder is inside more than one project, the deepest one is used.
 
