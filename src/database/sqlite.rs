@@ -5,7 +5,7 @@ use crate::types::{
     project::{Project, ProjectDraft},
     update::{Update, UpdateDraft},
 };
-use rusqlite::{Connection, OptionalExtension, Result, Row};
+use rusqlite::{Connection, OptionalExtension, Result, Row, Transaction, TransactionBehavior};
 use uuid::Uuid;
 
 pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
@@ -73,12 +73,19 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
               created_at TEXT DEFAULT (datetime('now')),
               closed_at TEXT,
               closed_by_update TEXT,
-              FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+              FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+              FOREIGN KEY(closed_by_update) REFERENCES updates(id) ON DELETE SET NULL
         )",
         (),
     )?;
 
-    migrate(conn)
+    migrate(conn)?;
+
+    // Deleting a project deletes its updates and plan items, and deleting an
+    // update unlinks the items it closed, through the tables' foreign keys.
+    // rusqlite's bundled SQLite turns them on by default; setting it here keeps
+    // us from relying on that build flag.
+    conn.pragma_update(None, "foreign_keys", true)
 }
 
 /// Bumped by each migration below; stored in SQLite's `user_version` pragma.
@@ -135,12 +142,18 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
     project_iter.collect()
 }
 
+/// Also deletes the project's updates and plan items (`ON DELETE CASCADE`).
 pub fn delete_project(conn: &Connection, project_id: &str) -> Result<()> {
-    // Foreign keys are off on Trail's connections, so ON DELETE CASCADE doesn't run.
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM plan_items WHERE project_id = ?1", [project_id])?;
-    tx.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
-    tx.commit()
+    conn.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+
+    Ok(())
+}
+
+/// Starts a transaction that holds the write lock from the start, so what's
+/// checked inside it still holds when it writes, even with another Trail
+/// process (the TUI, another agent) writing at the same time.
+pub fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
+    Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
 }
 
 pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<String> {
@@ -224,15 +237,12 @@ pub fn edit_update(conn: &Connection, update: &Update) -> Result<()> {
     Ok(())
 }
 
+/// Items the update closed stay closed; they just lose the link to it
+/// (`ON DELETE SET NULL`).
 pub fn delete_update(conn: &Connection, update_id: &str) -> Result<()> {
-    // Items the update closed stay closed; they just lose the link to it.
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE plan_items SET closed_by_update = NULL WHERE closed_by_update = ?1",
-        [update_id],
-    )?;
-    tx.execute("DELETE FROM updates WHERE id = ?1", [update_id])?;
-    tx.commit()
+    conn.execute("DELETE FROM updates WHERE id = ?1", [update_id])?;
+
+    Ok(())
 }
 
 const PLAN_ITEM_COLUMNS: &str =
@@ -283,7 +293,9 @@ pub fn get_plan_item(conn: &Connection, id: i64) -> Result<Option<PlanItem>> {
     .optional()
 }
 
-/// Marks an item done or dropped now. `update_id` is the update that closed it, if any.
+/// Marks an open item done or dropped now. `update_id` is the update that
+/// closed it, if any. An item that's already closed is left alone and errors,
+/// so a second close never overwrites who closed it.
 pub fn close_plan_item(
     conn: &Connection,
     id: i64,
@@ -293,7 +305,7 @@ pub fn close_plan_item(
     let changed = conn.execute(
         "UPDATE plan_items
               SET state = ?1, closed_at = datetime('now'), closed_by_update = ?2
-              WHERE id = ?3",
+              WHERE id = ?3 AND state = 'open'",
         (state.as_str(), update_id, id),
     )?;
 

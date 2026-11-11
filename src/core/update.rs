@@ -40,9 +40,6 @@ pub fn add_update(
         return Err(CoreError::Invalid("body can't be empty".into()));
     }
 
-    // Check the plan items first, so a bad id doesn't leave a half-written update.
-    check_open_items(conn, project, done)?;
-
     let next = next.unwrap_or("None");
 
     let (branch, commit_sha) = git_context(Path::new(&project.directory));
@@ -56,7 +53,9 @@ pub fn add_update(
         commit_sha,
     };
 
-    let tx = conn.unchecked_transaction()?;
+    // A bad plan item id rolls back the whole update.
+    let tx = sqlite::write_transaction(conn)?;
+    check_open_items(&tx, project, done)?;
     let id = sqlite::insert_update(&tx, &draft)?;
     close_items(&tx, done, PlanState::Done, Some(&id))?;
     tx.commit()?;

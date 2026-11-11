@@ -75,9 +75,9 @@ pub fn edit_plan(
         .map(|text| item_text(text))
         .collect::<Result<Vec<_>, _>>()?;
     let ids: Vec<i64> = edit.done.iter().chain(edit.drop).copied().collect();
-    check_open_items(conn, project, &ids)?;
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = sqlite::write_transaction(conn)?;
+    check_open_items(&tx, project, &ids)?;
     let mut changed = Vec::new();
     for text in texts {
         changed.push(sqlite::insert_plan_item(&tx, &project.id, text)?);
@@ -93,7 +93,8 @@ pub fn edit_plan(
     Ok(changed)
 }
 
-/// Fails unless every id is an open item in `project`, listed once.
+/// Fails unless every id is an open item in `project`, listed once. Call it inside
+/// a `write_transaction`, so the items can't close before they're written.
 pub(super) fn check_open_items(
     conn: &Connection,
     project: &Project,
