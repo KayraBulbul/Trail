@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    types::{project::ProjectStep, update::UpdateStep},
+    types::{plan::PlanState, project::ProjectStep, update::UpdateStep},
     ui::input::{Input, InputMode},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -48,6 +48,7 @@ fn setup() -> (App, Input, Connection) {
             show_update_table: false,
             show_update_popup: false,
             show_git_view: false,
+            show_plan_input: false,
             install_on_exit: false,
             show_help: false,
             help_scroll: 0,
@@ -59,6 +60,10 @@ fn setup() -> (App, Input, Connection) {
             updates: Vec::new(),
             project_selection: ListState::default(),
             update_selection: TableState::default(),
+            plan: Vec::new(),
+            plan_selection: ListState::default(),
+            show_closed_plan: false,
+            pending_plan_delete_id: None,
             opened_project_id: None,
             opened_update_id: None,
             pending_project_delete_id: None,
@@ -1771,4 +1776,124 @@ fn scrolling_over_the_git_diff_pane_before_a_diff_leaves_the_list_alone() {
         assert_eq!(app.git.branch_selection.selected(), selected);
     }
     assert!(app.git.focused_pane == GitPane::List);
+}
+
+fn ctrl_key(app: &mut App, input: &mut Input, conn: &Connection, c: char) {
+    app.handle_key_event(
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+        input,
+        conn,
+    )
+    .unwrap();
+}
+
+fn plan_texts(conn: &Connection) -> Vec<(String, PlanState)> {
+    sqlite::get_plan_items(conn, "a")
+        .unwrap()
+        .into_iter()
+        .map(|item| (item.text, item.state))
+        .collect()
+}
+
+fn selected_plan_text(app: &App) -> Option<String> {
+    app.selected_plan_item().map(|item| item.text.clone())
+}
+
+#[test]
+fn plan_pane_adds_edits_moves_and_deletes_items() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    ctrl_key(&mut app, &mut input, &conn, 'j');
+    assert!(app.focused_pane == BrowserPane::Plan);
+    assert!(
+        rendered_text(&mut app, &mut input, 120, 24).contains("No plan yet. Press a to add one.")
+    );
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(app.err.as_deref(), Some("Must enter a plan item."));
+    assert!(app.show_plan_input);
+    submit(&mut app, &mut input, &conn, "One");
+    for text in ["Two", "Three"] {
+        press(&mut app, &mut input, &conn, KeyCode::Char('a'));
+        submit(&mut app, &mut input, &conn, text);
+    }
+    assert!(!app.show_plan_input && app.err.is_none());
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Three"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('K'));
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Three"));
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('e'));
+    assert_eq!(input.input, "One");
+    submit(&mut app, &mut input, &conn, "!");
+    let open = |text: &str| (text.to_string(), PlanState::Open);
+    assert_eq!(
+        plan_texts(&conn),
+        [open("One!"), open("Three"), open("Two")]
+    );
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    press(&mut app, &mut input, &conn, KeyCode::Esc);
+    assert_eq!(plan_texts(&conn).len(), 3);
+    press(&mut app, &mut input, &conn, KeyCode::Char('d'));
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    assert_eq!(plan_texts(&conn), [open("Three"), open("Two")]);
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Three"));
+}
+
+#[test]
+fn closed_plan_items_hide_until_shown_and_can_be_reopened() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    for text in ["One", "Two", "Three"] {
+        sqlite::insert_plan_item(&conn, "a", text).unwrap();
+    }
+    sqlite::close_plan_item(&conn, 1, PlanState::Done, Some("latest")).unwrap();
+    focus_projects(&mut app, &mut input, &conn);
+    press(&mut app, &mut input, &conn, KeyCode::Enter);
+    ctrl_key(&mut app, &mut input, &conn, 'j');
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Two"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('X'));
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Three"));
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("1 open · 2 closed hidden"), "{text}");
+    assert!(!text.contains("One"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('c'));
+    let text = rendered_text(&mut app, &mut input, 120, 24);
+    assert!(text.contains("✓ One  done just now · in: Latest"), "{text}");
+    assert!(text.contains("✗ Two  dropped just now"), "{text}");
+    assert_eq!(selected_plan_text(&app).as_deref(), Some("Three"));
+
+    press(&mut app, &mut input, &conn, KeyCode::Char('g'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('x'));
+    press(&mut app, &mut input, &conn, KeyCode::Char('r'));
+    let states: Vec<PlanState> = plan_texts(&conn)
+        .into_iter()
+        .map(|(_, state)| state)
+        .collect();
+    assert_eq!(
+        states,
+        [PlanState::Open, PlanState::Dropped, PlanState::Open]
+    );
+}
+
+#[test]
+fn clicking_a_prompt_key_in_a_pane_focuses_that_pane_first() {
+    let (mut app, mut input, conn) = browser_with_updates();
+    assert!(app.focused_pane == BrowserPane::LatestUpdate);
+
+    let (x, y) = find_on_screen(&mut app, &mut input, "No plan yet. Press a");
+    let at = (x + "No plan yet. Press ".len() as u16, y);
+    mouse(
+        &mut app,
+        &mut input,
+        &conn,
+        MouseEventKind::Down(MouseButton::Left),
+        at,
+    );
+
+    assert!(app.focused_pane == BrowserPane::Plan);
+    assert!(app.show_plan_input);
+    assert!(!app.show_update_input);
 }

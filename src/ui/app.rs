@@ -3,6 +3,7 @@ use crate::{
     database::sqlite,
     git::repo::{self, Branch, Commit, Diff, Head, Summary},
     types::{
+        plan::{PlanItem, PlanState},
         project::Project,
         update::{Update, UpdateDraft},
     },
@@ -38,6 +39,7 @@ mod tests;
 pub enum BrowserPane {
     Projects,
     LatestUpdate,
+    Plan,
 }
 
 #[derive(PartialEq, Default)]
@@ -91,6 +93,8 @@ pub struct App {
     pub show_update_table: bool,
     pub show_update_popup: bool,
     pub show_git_view: bool,
+    /// The form for adding or editing a plan item.
+    pub show_plan_input: bool,
     pub install_on_exit: bool,
     pub show_help: bool,
     pub help_scroll: u16,
@@ -101,6 +105,12 @@ pub struct App {
     pub projects: Vec<Project>,
     pub updates: Vec<Update>,
     pub update_selection: TableState,
+    /// Every plan item of the opened project, open and closed, in plan order.
+    pub plan: Vec<PlanItem>,
+    /// Selects among the items the Plan pane shows (see `visible_plan`).
+    pub plan_selection: ListState,
+    pub show_closed_plan: bool,
+    pub pending_plan_delete_id: Option<i64>,
     pub project_selection: ListState,
     pub opened_project_id: Option<String>,
     pub opened_update_id: Option<String>,
@@ -157,8 +167,10 @@ impl App {
             && !self.show_project_input
             && !self.show_help
             && !self.show_git_view
+            && !self.show_plan_input
             && self.pending_project_delete_id.is_none()
             && self.pending_update_delete_id.is_none()
+            && self.pending_plan_delete_id.is_none()
     }
 
     /// Selects a row of the updates table and shows its preview from the top.
@@ -205,6 +217,7 @@ impl App {
             self.opened_project_id = None;
             self.git.summary = None;
             self.clear_updates();
+            self.clear_plan();
         }
         let previous_index = self.project_selection.selected().unwrap_or(0);
         if let Err(error) = self.reload_projects(conn) {
@@ -230,6 +243,9 @@ impl App {
             self.opened_update_id = None;
         }
         let previous_index = self.update_selection.selected().unwrap_or(0);
+        if let Err(error) = self.reload_plan(conn) {
+            self.err = Some(format!("Couldn't reload the plan: {error}"));
+        }
         if let Err(error) = self.reload_updates(conn) {
             self.err = Some(format!("Couldn't reload updates: {error}"));
         } else if self.updates.is_empty() {
@@ -238,6 +254,66 @@ impl App {
             self.update_selection
                 .select(Some(previous_index.min(self.updates.len() - 1)));
         }
+    }
+
+    /// The items the Plan pane lists: the open ones, plus closed ones when shown.
+    fn visible_plan(&self) -> Vec<&PlanItem> {
+        self.plan
+            .iter()
+            .filter(|item| self.show_closed_plan || item.state == PlanState::Open)
+            .collect()
+    }
+
+    fn selected_plan_item(&self) -> Option<&PlanItem> {
+        let index = self.plan_selection.selected()?;
+        self.visible_plan().get(index).copied()
+    }
+
+    fn clear_plan(&mut self) {
+        self.plan.clear();
+        self.plan_selection = ListState::default();
+    }
+
+    fn reload_plan(&mut self, conn: &Connection) -> Result<()> {
+        let Some(id) = self.opened_project_id.clone() else {
+            unreachable!();
+        };
+        self.plan = sqlite::get_plan_items(conn, &id)?;
+        self.clamp_plan_selection(self.plan_selection.selected().unwrap_or(0));
+        Ok(())
+    }
+
+    /// Selects the visible item at `index`, or the last one if there are fewer.
+    fn clamp_plan_selection(&mut self, index: usize) {
+        let len = self.visible_plan().len();
+        self.plan_selection.select(if len == 0 {
+            None
+        } else {
+            Some(index.min(len - 1))
+        });
+    }
+
+    /// Reloads the plan after a change to it, keeping `keep` selected when it's
+    /// still shown and otherwise staying at the same row.
+    fn after_plan_change(
+        &mut self,
+        conn: &Connection,
+        result: Result<()>,
+        action: &str,
+        keep: Option<i64>,
+    ) {
+        if let Err(error) = result {
+            self.err = Some(format!("Couldn't {action}: {error}"));
+            return;
+        }
+        self.err = None;
+        let previous_index = self.plan_selection.selected().unwrap_or(0);
+        if let Err(error) = self.reload_plan(conn) {
+            self.err = Some(format!("Couldn't reload the plan: {error}"));
+            return;
+        }
+        let kept = keep.and_then(|id| self.visible_plan().iter().position(|item| item.id == id));
+        self.clamp_plan_selection(kept.unwrap_or(previous_index));
     }
 
     fn clear_updates(&mut self) {

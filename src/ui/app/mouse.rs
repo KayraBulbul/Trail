@@ -20,6 +20,7 @@ pub enum Click {
     Project(usize),
     Update(usize),
     GitItem(usize),
+    PlanItem(usize),
 }
 
 impl App {
@@ -39,7 +40,17 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => match hits.next() {
-                Some(Click::Key(key) | Click::Focus(key)) => {
+                Some(Click::Key(key)) => {
+                    // A key in a pane's prompt acts on that pane, so focus it first.
+                    if let Some(focus) = hits.find_map(|click| match click {
+                        Click::Focus(focus) => Some(focus),
+                        _ => None,
+                    }) {
+                        self.handle_key_event(focus, text_in, conn)?;
+                    }
+                    self.handle_key_event(key, text_in, conn)?;
+                }
+                Some(Click::Focus(key)) => {
                     self.handle_key_event(key, text_in, conn)?;
                 }
                 Some(Click::Project(index)) => {
@@ -55,6 +66,10 @@ impl App {
                         self.select_update(index);
                         self.update_click = Some(index);
                     }
+                }
+                Some(Click::PlanItem(index)) => {
+                    self.focused_pane = BrowserPane::Plan;
+                    self.clamp_plan_selection(index);
                 }
                 Some(Click::GitItem(index)) => {
                     self.git.focused_pane = GitPane::List;
