@@ -65,4 +65,88 @@ fn migration_keeps_old_updates_and_old_style_inserts_working() {
     )
     .unwrap();
     assert_eq!(get_updates(&conn, "a").unwrap().len(), 2);
+    // The plan table is created for databases from before plans existed.
+    insert_plan_item(&conn, "a", "Item").unwrap();
+    assert_eq!(get_plan_items(&conn, "a").unwrap().len(), 1);
+}
+
+#[test]
+fn deleting_a_project_deletes_its_updates_and_plan_items_and_deleting_an_update_unlinks_items() {
+    let conn = Connection::open_in_memory().unwrap();
+    initialize_schema(&conn).unwrap();
+    let project = |name: &str| ProjectDraft {
+        name: Some(name.into()),
+        directory: Some(format!("/{name}")),
+    };
+    let (kept, deleted) = (
+        insert_project(&conn, &project("kept")).unwrap(),
+        insert_project(&conn, &project("deleted")).unwrap(),
+    );
+    let update = insert_update(
+        &conn,
+        &crate::types::update::UpdateDraft {
+            title: Some("T".into()),
+            project_id: Some(kept.clone()),
+            body: Some("B".into()),
+            next: Some("N".into()),
+            branch: None,
+            commit_sha: None,
+        },
+    )
+    .unwrap();
+    let item = insert_plan_item(&conn, &kept, "Finished").unwrap();
+    close_plan_item(&conn, item, PlanState::Done, Some(&update)).unwrap();
+    insert_plan_item(&conn, &deleted, "Gone").unwrap();
+    insert_update(
+        &conn,
+        &crate::types::update::UpdateDraft {
+            title: Some("Gone".into()),
+            project_id: Some(deleted.clone()),
+            body: Some("B".into()),
+            next: Some("N".into()),
+            branch: None,
+            commit_sha: None,
+        },
+    )
+    .unwrap();
+
+    delete_update(&conn, &update).unwrap();
+    delete_project(&conn, &deleted).unwrap();
+
+    let item = get_plan_item(&conn, item).unwrap().unwrap();
+    assert_eq!((item.state, item.closed_by_update), (PlanState::Done, None));
+    for table in ["plan_items", "updates"] {
+        let orphans: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE project_id = ?1"),
+                [&deleted],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0, "{table}");
+    }
+}
+
+#[test]
+fn closing_an_already_closed_item_fails_and_keeps_who_closed_it() {
+    let conn = Connection::open_in_memory().unwrap();
+    initialize_schema(&conn).unwrap();
+    let project = insert_project(
+        &conn,
+        &ProjectDraft {
+            name: Some("Trail".into()),
+            directory: Some("/trail".into()),
+        },
+    )
+    .unwrap();
+    let item = insert_plan_item(&conn, &project, "Item").unwrap();
+    close_plan_item(&conn, item, PlanState::Done, None).unwrap();
+
+    // Another process that checked the item while it was still open.
+    assert!(close_plan_item(&conn, item, PlanState::Dropped, None).is_err());
+
+    assert_eq!(
+        get_plan_item(&conn, item).unwrap().unwrap().state,
+        PlanState::Done
+    );
 }

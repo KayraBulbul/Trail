@@ -3,6 +3,7 @@ use crate::{
     format,
     git::repo::Head,
     types::{
+        plan::{PlanItem, PlanState},
         project::ProjectStep,
         update::{Update, UpdateStep},
     },
@@ -21,6 +22,7 @@ use ratatui::{
 };
 
 const TABLE_HINTS: &str = "(Enter) open | (j/k) select | (Ctrl+j) preview | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
+const PLAN_HINTS: &str = "(a) add | (e) edit | (x) done | (X) drop | (r) reopen | (d) delete | (J/K) move | (c) closed | (j/k) select | (Ctrl+k) update | (Ctrl+h) projects | (?) help | (q) quit";
 const PREVIEW_HINTS: &str = "(Enter) open | (j/k) scroll | (Ctrl+k) table | (e) edit | (d) delete | (Backspace) back | (?) help | (q) quit";
 
 impl App {
@@ -32,7 +34,9 @@ impl App {
             self.render_help_window(frame);
             return;
         }
-        if self.show_project_input
+        if self.show_plan_input {
+            self.render_plan_input(frame, text_in);
+        } else if self.show_project_input
             && (text_in.project_step == ProjectStep::Name
                 || text_in.project_step == ProjectStep::Directory)
         {
@@ -108,6 +112,21 @@ impl App {
             title.to_string()
         };
         self.render_input(frame, text_in, &title, placeholder, help);
+    }
+
+    fn render_plan_input(&mut self, frame: &mut Frame, text_in: &input::Input) {
+        let title = if text_in.editing_plan_item.is_some() {
+            "Edit: Plan Item"
+        } else {
+            "Plan Item"
+        };
+        self.render_input(
+            frame,
+            text_in,
+            title,
+            "Required: a piece of work still to do",
+            "(Enter) save | (Esc) cancel",
+        );
     }
 
     fn render_input(
@@ -259,17 +278,29 @@ impl App {
                 "(A) new | (Enter) open | (j/k) select | (d) delete | (Ctrl+l) updates | (?) help | (q) quit"
             }
             BrowserPane::LatestUpdate if self.opened_git_directory().is_some() => {
-                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+                "(a) new | (e) edit | (u) table | (g) git | (j/k) scroll | (Ctrl+j) plan | (Ctrl+h) projects | (?) help | (q) quit"
             }
             BrowserPane::LatestUpdate => {
-                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+h) projects | (?) help | (q) quit"
+                "(a) new | (e) edit | (u) table | (j/k) scroll | (Ctrl+j) plan | (Ctrl+h) projects | (?) help | (q) quit"
             }
+            BrowserPane::Plan => PLAN_HINTS,
         };
         let content_area = self.render_bottom_rows(frame, help);
 
-        let [project_list_area, latest_update_area] = content_area.layout(&Layout::horizontal([
+        let [project_list_area, right_area] = content_area.layout(&Layout::horizontal([
             Constraint::Percentage(20),
             Constraint::Percentage(80),
+        ]));
+        // The plan sits under the latest update, as tall as its items, up to 40%.
+        let plan_height = if self.opened_project_id.is_some() {
+            let rows = self.visible_plan().len().max(1) as u16;
+            (rows + 2).min((right_area.height * 2 / 5).max(3))
+        } else {
+            0
+        };
+        let [latest_update_area, plan_area] = right_area.layout(&Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(plan_height),
         ]));
         self.add_click(
             project_list_area,
@@ -281,6 +312,10 @@ impl App {
             latest_update_area,
             Click::Focus(ctrl('l')),
         );
+        if !plan_area.is_empty() {
+            self.add_click(plan_area, plan_area, Click::Focus(ctrl('j')));
+            self.render_plan(frame, plan_area);
+        }
 
         let projects: Vec<ListItem<'_>> = self
             .projects
@@ -382,6 +417,96 @@ impl App {
                 frame.render_widget(project_message, latest_update_area);
             }
         }
+    }
+
+    fn render_plan(&mut self, frame: &mut Frame, area: Rect) {
+        let open = self
+            .plan
+            .iter()
+            .filter(|item| item.state == PlanState::Open)
+            .count();
+        let closed = self.plan.len() - open;
+        let mut counts = vec![format!("{open} open")];
+        if closed > 0 {
+            counts.push(format!(
+                "{closed} closed{}",
+                if self.show_closed_plan { "" } else { " hidden" }
+            ));
+        }
+        let mut block = Block::bordered()
+            .title("Plan")
+            .border_style(theme::border(self.focused_pane == BrowserPane::Plan));
+        if !self.plan.is_empty() {
+            block = block.title_top(
+                Line::from(format!(" {} ", counts.join(" · ")))
+                    .style(theme::SECONDARY)
+                    .right_aligned(),
+            );
+        }
+
+        let visible = self.visible_plan();
+        if visible.is_empty() {
+            let line = if self.plan.is_empty() {
+                Line::from(vec![
+                    "No plan yet. Press ".into(),
+                    "a".bold(),
+                    " to add one.".into(),
+                ])
+            } else {
+                Line::from(vec![
+                    "Nothing left to do. Press ".into(),
+                    "c".bold(),
+                    " to show closed items.".into(),
+                ])
+            };
+            let inner = block.inner(area);
+            if line.width() <= usize::from(inner.width) {
+                self.record_bold_keys(&line, inner);
+            }
+            frame.render_widget(
+                Paragraph::new(line).style(theme::SECONDARY).block(block),
+                area,
+            );
+            return;
+        }
+
+        let items: Vec<ListItem<'_>> = visible
+            .iter()
+            .map(|item| ListItem::new(self.plan_line(item)))
+            .collect();
+        let len = items.len();
+        let list = List::new(items).highlight_symbol("> ").block(block);
+        frame.render_stateful_widget(list, area, &mut self.plan_selection);
+        self.record_list_rows(area, self.plan_selection.offset(), len, Click::PlanItem);
+    }
+
+    /// An open item is its text. A closed one is greyed out and says when it was
+    /// done or dropped, and which update finished it.
+    fn plan_line(&self, item: &PlanItem) -> Line<'static> {
+        if item.state == PlanState::Open {
+            return Line::from(item.text.clone());
+        }
+        let mark = if item.state == PlanState::Done {
+            "✓"
+        } else {
+            "✗"
+        };
+        let mut details = vec![item.state.as_str().to_string()];
+        if let Some(closed_at) = item.closed_at {
+            details[0].push_str(&format!(" {}", format::relative_time(closed_at)));
+        }
+        if let Some(update) = item
+            .closed_by_update
+            .as_deref()
+            .and_then(|id| self.updates.iter().find(|update| update.id == id))
+        {
+            details.push(format!("in: {}", update.title));
+        }
+        Line::from(vec![
+            Span::raw(format!("{mark} {}", item.text)),
+            Span::raw(format!("  {}", details.join(" · "))),
+        ])
+        .style(theme::SECONDARY)
     }
 
     fn git_summary_line(&self) -> Option<Line<'static>> {
@@ -626,6 +751,17 @@ impl App {
                     "This removes the update from Trail.",
                     "This cannot be undone.",
                 )
+            } else if let Some(item) = self
+                .plan
+                .iter()
+                .find(|item| self.pending_plan_delete_id == Some(item.id))
+            {
+                (
+                    "Delete plan item?",
+                    item.text.as_str(),
+                    "This removes the item from the plan for good.",
+                    "To keep a record of it, drop it with X instead.",
+                )
             } else {
                 return;
             };
@@ -829,6 +965,7 @@ impl App {
             Line::from("Enter: open selected project (Projects focused)"),
             Line::from("Ctrl+h: focus Projects"),
             Line::from("Ctrl+l: focus Latest Update"),
+            Line::from("Ctrl+j: focus Plan (requires an open project)"),
             Line::from("d: delete selected project (Projects focused)"),
             Line::from("a: new update"),
             Line::from("e: edit displayed update (Latest Update focused)"),
@@ -836,6 +973,19 @@ impl App {
             Line::from("G: scroll to the end of the update (Latest Update focused)"),
             Line::from("u: update table (requires an open project)"),
             Line::from("g: git view (Latest Update focused, requires a git project)"),
+            Line::from(""),
+            Line::from("Plan").style(theme::HEADING),
+            Line::from("j / Down, k / Up: select an item"),
+            Line::from("g / G: first / last item"),
+            Line::from("a: add an item to the end of the plan"),
+            Line::from("e: edit the selected item"),
+            Line::from("x: mark the selected item done"),
+            Line::from("X: drop the selected item (it won't be done)"),
+            Line::from("r: reopen a done or dropped item"),
+            Line::from("d: delete the selected item"),
+            Line::from("J / K: move the selected item down / up"),
+            Line::from("c: show or hide done and dropped items"),
+            Line::from("Ctrl+k: focus Latest Update"),
             Line::from(""),
             Line::from("Update table").style(theme::HEADING),
             Line::from("j / Down, k / Up: select row"),
@@ -860,7 +1010,7 @@ impl App {
             Line::from("Backspace: back (diff, commits, branches, close)"),
             Line::from("q: quit"),
             Line::from(""),
-            Line::from("Project and update forms").style(theme::HEADING),
+            Line::from("Project, update and plan item forms").style(theme::HEADING),
             Line::from("Type: insert text"),
             Line::from("Left / Right: move cursor"),
             Line::from("Backspace: delete previous character"),
@@ -881,7 +1031,7 @@ impl App {
             Line::from("Scroll: scroll or move the selection in the pane under the cursor"),
             Line::from(""),
             Line::from("Help").style(theme::HEADING),
-            Line::from("?: open help from any page except the project and update forms"),
+            Line::from("?: open help from any page except the forms"),
             Line::from("j/k or Up/Down: scroll"),
             Line::from("PgUp/PgDn, Home/End: scroll details, confirmation, diff or help"),
             Line::from("g / G: top / end"),

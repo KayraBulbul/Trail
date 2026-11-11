@@ -1,10 +1,11 @@
 use super::{App, BrowserPane, DiffSource, GitEntry, GitPane, TablePane};
 use crate::{
-    types::{project::ProjectStep, update::UpdateStep},
+    database::sqlite,
+    types::{plan::PlanState, project::ProjectStep, update::UpdateStep},
     ui::input::{self, InputMode},
     update::updater,
 };
-use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rusqlite::Connection;
 use std::io;
 
@@ -37,6 +38,7 @@ impl App {
             if key_event.code == KeyCode::Char('?')
                 && !self.show_project_input
                 && !self.show_update_input
+                && !self.show_plan_input
             {
                 self.help_scroll = 0;
                 self.show_help = true;
@@ -64,6 +66,20 @@ impl App {
                         }
                     }
                     KeyCode::Esc => self.pending_update_delete_id = None,
+                    _ => {}
+                }
+                return Ok(());
+            }
+
+            if self.pending_plan_delete_id.is_some() {
+                match key_event.code {
+                    KeyCode::Enter => {
+                        if let Some(id) = self.pending_plan_delete_id.take() {
+                            let result = sqlite::delete_plan_item(conn, id);
+                            self.after_plan_change(conn, result, "delete the plan item", None);
+                        }
+                    }
+                    KeyCode::Esc => self.pending_plan_delete_id = None,
                     _ => {}
                 }
                 return Ok(());
@@ -108,6 +124,7 @@ impl App {
                 }
             } else if !self.show_update_input
                 && !self.show_project_input
+                && !self.show_plan_input
                 && !self.show_update_table
                 && self.focused_pane == BrowserPane::LatestUpdate
             {
@@ -178,6 +195,7 @@ impl App {
 
                                 self.opened_project_id = Some(project_id);
                                 self.clear_updates();
+                                self.clear_plan();
                                 self.reload_git_summary();
                                 self.focused_pane = BrowserPane::LatestUpdate;
                             }
@@ -298,6 +316,35 @@ impl App {
                             _ => {}
                         }
                     }
+                    _ => {}
+                }
+            } else if self.show_plan_input {
+                match key_event.code {
+                    KeyCode::Enter if text_in.input.trim().is_empty() => {
+                        self.err = Some("Must enter a plan item.".to_string());
+                    }
+                    KeyCode::Enter => {
+                        let Some(project_id) = self.opened_project_id.clone() else {
+                            unreachable!("The plan item form requires an opened project");
+                        };
+                        match text_in.submit_plan_item(conn, &project_id) {
+                            Ok(id) => {
+                                self.show_plan_input = false;
+                                self.focused_pane = BrowserPane::Plan;
+                                self.after_plan_change(conn, Ok(()), "save", Some(id));
+                            }
+                            Err(error) => self.err = Some(format!("{error}. Please try again.")),
+                        }
+                    }
+                    KeyCode::Esc => {
+                        text_in.reset_all();
+                        self.err = None;
+                        self.show_plan_input = false;
+                    }
+                    KeyCode::Char(to_insert) => text_in.enter_char(to_insert),
+                    KeyCode::Left => text_in.move_cursor_left(),
+                    KeyCode::Right => text_in.move_cursor_right(),
+                    KeyCode::Backspace => text_in.delete_char(),
                     _ => {}
                 }
             } else if self.show_update_table {
@@ -462,6 +509,9 @@ impl App {
                     }
                     _ => {}
                 }
+            } else if self.focused_pane == BrowserPane::Plan
+                && self.handle_plan_key(key_event, text_in, conn)
+            {
             } else {
                 match key_event.code {
                     // New Project
@@ -532,6 +582,10 @@ impl App {
                                     "Error retrieving updates for this project: {error}"
                                 ))
                             }
+                            self.clear_plan();
+                            if let Err(error) = self.reload_plan(conn) {
+                                self.err = Some(format!("Couldn't load the plan: {error}"));
+                            }
                             self.reload_git_summary();
                             self.focused_pane = BrowserPane::LatestUpdate;
                         }
@@ -543,6 +597,13 @@ impl App {
                     // Right pane
                     KeyCode::Char('l') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                         self.focused_pane = BrowserPane::LatestUpdate;
+                    }
+                    // Plan pane, under the latest update
+                    KeyCode::Char('j')
+                        if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                            && self.opened_project_id.is_some() =>
+                    {
+                        self.focused_pane = BrowserPane::Plan;
                     }
                     // Delete project
                     KeyCode::Char('d')
@@ -570,6 +631,97 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Keys for the focused Plan pane. Returns false for keys it leaves to the
+    /// rest of the browser (new project, quit, other panes, the table).
+    fn handle_plan_key(
+        &mut self,
+        key_event: KeyEvent,
+        text_in: &mut input::Input,
+        conn: &Connection,
+    ) -> bool {
+        let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+        let len = self.visible_plan().len();
+        let selected = self.selected_plan_item().cloned();
+        match key_event.code {
+            // Focus Latest Update
+            KeyCode::Char('k') if ctrl => self.focused_pane = BrowserPane::LatestUpdate,
+            KeyCode::Char('j') if ctrl => {}
+            KeyCode::Char('j') | KeyCode::Down if len > 0 => {
+                let index = self.plan_selection.selected().map_or(0, |index| index + 1);
+                self.clamp_plan_selection(index);
+            }
+            KeyCode::Char('k') | KeyCode::Up if len > 0 => {
+                let index = self.plan_selection.selected().unwrap_or(0);
+                self.clamp_plan_selection(index.saturating_sub(1));
+            }
+            // Top / bottom of the plan. Never the git view, even with an empty plan.
+            KeyCode::Char('g') => self.clamp_plan_selection(0),
+            KeyCode::Char('G') => self.clamp_plan_selection(len.saturating_sub(1)),
+            // New plan item
+            KeyCode::Char('a') => {
+                text_in.reset_all();
+                self.show_plan_input = true;
+                self.err = None;
+            }
+            KeyCode::Char('e') => {
+                if let Some(item) = selected {
+                    text_in.edit_plan_item(item);
+                    self.show_plan_input = true;
+                    self.err = None;
+                }
+            }
+            // Done / dropped
+            KeyCode::Char(key @ ('x' | 'X')) => {
+                if let Some(item) = selected.filter(|item| item.state == PlanState::Open) {
+                    let state = if key == 'x' {
+                        PlanState::Done
+                    } else {
+                        PlanState::Dropped
+                    };
+                    let result = sqlite::close_plan_item(conn, item.id, state, None);
+                    self.after_plan_change(conn, result, "close the plan item", Some(item.id));
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(item) = selected.filter(|item| item.state != PlanState::Open) {
+                    let result = sqlite::reopen_plan_item(conn, item.id);
+                    self.after_plan_change(conn, result, "reopen the plan item", Some(item.id));
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(item) = selected {
+                    self.pending_plan_delete_id = Some(item.id);
+                    self.err = None;
+                }
+            }
+            // Move the selected item down / up the plan
+            KeyCode::Char(key @ ('J' | 'K')) => {
+                let index = self.plan_selection.selected();
+                let neighbour = index.and_then(|index| {
+                    let other = if key == 'J' {
+                        index + 1
+                    } else {
+                        index.checked_sub(1)?
+                    };
+                    self.visible_plan().get(other).map(|item| (*item).clone())
+                });
+                if let (Some(item), Some(other)) = (selected, neighbour) {
+                    let result = sqlite::swap_plan_items(conn, &item, &other);
+                    self.after_plan_change(conn, result, "move the plan item", Some(item.id));
+                }
+            }
+            // Show / hide done and dropped items
+            KeyCode::Char('c') => {
+                self.show_closed_plan = !self.show_closed_plan;
+                let kept = selected
+                    .and_then(|item| self.visible_plan().iter().position(|i| i.id == item.id));
+                self.clamp_plan_selection(kept.unwrap_or(0));
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Moves the new-project form to Confirm once the directory exists and the

@@ -191,6 +191,8 @@ fn agents_snippet_covers_the_session_workflow() {
         "--body -",
         "--json",
         "Never edit or delete",
+        "trail plan add",
+        "--done",
     ] {
         assert!(AGENTS_SNIPPET.contains(text), "missing {text}");
     }
@@ -240,4 +242,73 @@ fn zero_commits_since_is_left_out() {
         output::log(&[update(Some(0))]).starts_with("T  (just now · written on main @ 94bd07e)\n")
     );
     assert!(output::log(&[update(Some(1))]).contains("@ 94bd07e · 1 commit since)"));
+}
+
+#[test]
+fn plan_takes_the_project_flag_anywhere_and_ids_with_commas() {
+    let cli = parse(&["plan", "done", "3,5", "7", "-p", "Trail"]).unwrap();
+    let Some(Command::Plan {
+        project,
+        action: Some(PlanAction::Done { ids }),
+        ..
+    }) = cli.command
+    else {
+        panic!("expected plan done");
+    };
+    assert_eq!(project.as_deref(), Some("Trail"));
+    assert_eq!(ids, [3, 5, 7]);
+
+    assert!(parse(&["plan", "add"]).is_err());
+    let Some(Command::Add { done, .. }) =
+        parse(&["add", "--title", "T", "--body", "B", "--done", "1,2"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected add");
+    };
+    assert_eq!(done, [1, 2]);
+}
+
+#[test]
+fn status_lists_the_open_plan_and_plan_all_marks_closed_items() {
+    let (conn, folder) = (database(), Folder::new());
+    trail(&conn, &folder.0, &["init", "--name", "Demo"], "").unwrap();
+    assert!(
+        trail(&conn, &folder.0, &["status"], "")
+            .unwrap()
+            .ends_with("\n\nNo plan yet. Add items with: trail plan add \"<item>\" ...")
+    );
+
+    let added = trail(
+        &conn,
+        &folder.0,
+        &["plan", "add", "One", "Two", "Three"],
+        "",
+    )
+    .unwrap();
+    assert_eq!(added, "Added #1: One\nAdded #2: Two\nAdded #3: Three");
+    assert_eq!(
+        trail(&conn, &folder.0, &["plan", "drop", "2"], "").unwrap(),
+        "Dropped #2: Two"
+    );
+    let update = trail(
+        &conn,
+        &folder.0,
+        &["add", "--title", "T", "--body", "B", "--done", "1"],
+        "",
+    )
+    .unwrap();
+    assert_eq!(update, "Added to Demo: T\nMarked done: #1");
+
+    let status = trail(&conn, &folder.0, &["status"], "").unwrap();
+    assert!(
+        status.ends_with("\n\nPlan  (1 open)\n  #3  Three"),
+        "{status}"
+    );
+    assert_eq!(
+        trail(&conn, &folder.0, &["plan", "--all"], "").unwrap(),
+        "#1  ✓ One  (done just now)\n#2  ✗ Two  (dropped just now)\n#3  Three"
+    );
+    let error = trail(&conn, &folder.0, &["plan", "done", "1"], "").unwrap_err();
+    assert_eq!(error, "plan item 1 is already done");
 }

@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::{
     core::{
+        plan::{PlanEdit, edit_plan, plan},
         project::{CoreError, init_project, list_projects, resolve_project},
         status,
         update::add_update,
@@ -40,7 +41,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Show this folder's project, its latest update, and git info.
+    /// Show this folder's project, its latest update, its plan, and git info.
     Status {
         #[command(flatten)]
         target: Target,
@@ -66,6 +67,20 @@ pub enum Command {
         /// What to do next. Defaults to "None".
         #[arg(long)]
         next: Option<String>,
+        /// Plan items this update finished, by id: `--done 3,5`.
+        #[arg(long, value_delimiter = ',')]
+        done: Vec<i64>,
+    },
+    /// Show the plan: the work still to do. Subcommands change it.
+    Plan {
+        /// Use the project with this name instead of the one for the current folder.
+        #[arg(short, long, global = true)]
+        project: Option<String>,
+        /// Include done and dropped items.
+        #[arg(long)]
+        all: bool,
+        #[command(subcommand)]
+        action: Option<PlanAction>,
     },
     /// List all projects.
     Projects,
@@ -81,6 +96,25 @@ pub enum Command {
     Mcp,
     /// Install the latest version.
     Update,
+}
+
+#[derive(Subcommand)]
+pub enum PlanAction {
+    /// Add items to the end of the plan, one per argument.
+    Add {
+        #[arg(required = true)]
+        items: Vec<String>,
+    },
+    /// Mark items done, by id.
+    Done {
+        #[arg(required = true, value_delimiter = ',')]
+        ids: Vec<i64>,
+    },
+    /// Drop items that won't be done, by id. Say why in your next update.
+    Drop {
+        #[arg(required = true, value_delimiter = ',')]
+        ids: Vec<i64>,
+    },
 }
 
 /// Which project a command applies to.
@@ -175,6 +209,7 @@ fn execute(
             title,
             body,
             next,
+            done,
         } => {
             // Find the project first, so a wrong folder fails before waiting on stdin.
             let project = resolve_project(conn, cwd, target.project.as_deref())?;
@@ -185,11 +220,46 @@ fn execute(
             } else {
                 body
             };
-            let update = add_update(conn, &project, &title, &body, next.as_deref())?;
+            let update = add_update(conn, &project, &title, &body, next.as_deref(), &done)?;
             if json {
                 to_json(&update)
             } else {
-                output::added(&project.name, &update)
+                output::added(&project.name, &update, &done)
+            }
+        }
+        Command::Plan {
+            project,
+            all,
+            action,
+        } => {
+            let project = resolve_project(conn, cwd, project.as_deref())?;
+            let edit = match &action {
+                None => {
+                    let items = plan(conn, &project, all)?;
+                    return Ok(if json {
+                        to_json(&items)
+                    } else {
+                        output::plan(&items)
+                    });
+                }
+                Some(PlanAction::Add { items }) => PlanEdit {
+                    add: items,
+                    ..PlanEdit::default()
+                },
+                Some(PlanAction::Done { ids }) => PlanEdit {
+                    done: ids,
+                    ..PlanEdit::default()
+                },
+                Some(PlanAction::Drop { ids }) => PlanEdit {
+                    drop: ids,
+                    ..PlanEdit::default()
+                },
+            };
+            let changed = edit_plan(conn, &project, &edit)?;
+            if json {
+                to_json(&changed)
+            } else {
+                output::plan_changed(&changed)
             }
         }
         Command::Projects => {

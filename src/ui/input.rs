@@ -1,9 +1,11 @@
 use crate::types::{
+    plan::PlanItem,
     project::{ProjectDraft, ProjectStep},
     update::{Update, UpdateDraft, UpdateStep},
 };
 
 mod completion;
+mod planform;
 mod projectform;
 mod updateform;
 
@@ -18,6 +20,8 @@ pub struct Input {
     pub update: UpdateDraft,
     pub update_step: UpdateStep,
     pub editing_update: Option<Update>,
+    /// The plan item the plan item form is editing; `None` when adding one.
+    pub editing_plan_item: Option<PlanItem>,
     /// Folders listed by Tab in the directory field, cleared by any other key.
     pub completion: Option<Completion>,
 }
@@ -49,6 +53,7 @@ impl Input {
             },
             update_step: UpdateStep::Title,
             editing_update: None,
+            editing_plan_item: None,
             completion: None,
         }
     }
@@ -105,6 +110,7 @@ impl Input {
         self.completion = None;
         self.reset_project();
         self.reset_update();
+        self.editing_plan_item = None;
         self.project_step = ProjectStep::Name;
         self.update_step = UpdateStep::Title;
     }

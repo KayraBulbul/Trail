@@ -4,13 +4,16 @@ use std::path::Path;
 
 use crate::{
     core::{
+        plan::PlanItemInfo,
         project::{Init, ProjectSummary},
         status::{GitStatus, Status, UpdateInfo},
     },
     format,
+    types::plan::PlanState,
 };
 
 const NO_UPDATES: &str = "No updates yet. Add one with: trail add --title ... --body ...";
+const NO_PLAN: &str = "No plan yet. Add items with: trail plan add \"<item>\" ...";
 
 pub fn status(status: &Status) -> String {
     let name = &status.project.name;
@@ -34,7 +37,64 @@ pub fn status(status: &Status) -> String {
         }
         None => lines.push(NO_UPDATES.to_string()),
     }
+
+    lines.push(String::new());
+    if status.plan.is_empty() {
+        lines.push(NO_PLAN.to_string());
+    } else {
+        lines.push(format!("Plan  ({} open)", status.plan.len()));
+        lines.push(indent(&plan(&status.plan)));
+    }
     lines.join("\n")
+}
+
+/// `#7  Phase 3 feedback`, one item per line, with closed items marked
+/// `✓` (done) or `✗` (dropped) and when that happened.
+pub fn plan(items: &[PlanItemInfo]) -> String {
+    if items.is_empty() {
+        return NO_PLAN.to_string();
+    }
+    let ids: Vec<String> = items.iter().map(|item| format!("#{}", item.id)).collect();
+    let id_width = column_width(ids.iter().map(String::as_str));
+    items
+        .iter()
+        .zip(&ids)
+        .map(|(item, id)| {
+            let closed = item.closed_at.map(format::relative_time);
+            match (item.state, closed) {
+                (PlanState::Open, _) | (_, None) => format!("{id:<id_width$}  {}", item.text),
+                (state, Some(when)) => {
+                    let mark = if state == PlanState::Done {
+                        '✓'
+                    } else {
+                        '✗'
+                    };
+                    format!(
+                        "{id:<id_width$}  {mark} {}  ({} {when})",
+                        item.text,
+                        state.as_str()
+                    )
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What `trail plan add/done/drop` changed: `Added #7: Phase 5`.
+pub fn plan_changed(items: &[PlanItemInfo]) -> String {
+    items
+        .iter()
+        .map(|item| {
+            let verb = match item.state {
+                PlanState::Open => "Added",
+                PlanState::Done => "Done",
+                PlanState::Dropped => "Dropped",
+            };
+            format!("{verb} #{}: {}", item.id, item.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn log(updates: &[UpdateInfo]) -> String {
@@ -56,11 +116,16 @@ pub fn log(updates: &[UpdateInfo]) -> String {
         .join("\n\n")
 }
 
-pub fn added(project: &str, update: &UpdateInfo) -> String {
+pub fn added(project: &str, update: &UpdateInfo, done: &[i64]) -> String {
     let written_on = format::written_on(update.branch.as_deref(), update.commit_sha.as_deref())
         .map(|written_on| format!(" (written on {written_on})"))
         .unwrap_or_default();
-    format!("Added to {project}: {}{written_on}", update.title)
+    let mut text = format!("Added to {project}: {}{written_on}", update.title);
+    if !done.is_empty() {
+        let ids: Vec<String> = done.iter().map(|id| format!("#{id}")).collect();
+        text.push_str(&format!("\nMarked done: {}", ids.join(", ")));
+    }
+    text
 }
 
 pub fn projects(projects: &[ProjectSummary]) -> String {

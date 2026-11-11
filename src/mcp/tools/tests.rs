@@ -48,7 +48,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn definitions_list_the_four_tools_with_object_schemas() {
+fn definitions_list_the_tools_with_object_schemas() {
     let tools = definitions();
     let names: Vec<&str> = tools
         .as_array()
@@ -59,7 +59,14 @@ fn definitions_list_the_four_tools_with_object_schemas() {
 
     assert_eq!(
         names,
-        ["trail_status", "trail_log", "trail_add", "trail_projects"]
+        [
+            "trail_status",
+            "trail_log",
+            "trail_add",
+            "trail_plan",
+            "trail_plan_edit",
+            "trail_projects"
+        ]
     );
     for tool in tools.as_array().unwrap() {
         assert_eq!(tool["inputSchema"]["type"], "object");
@@ -140,4 +147,41 @@ fn bad_arguments_are_tool_errors_and_nothing_is_saved() {
     }
     let status = fixture.json("demo", "trail_status", json!({}));
     assert!(status["latest_update"].is_null());
+}
+
+#[test]
+fn plan_tools_edit_the_plan_and_trail_add_finishes_items() {
+    let fixture = Fixture::new();
+
+    let added = fixture.json(
+        "demo",
+        "trail_plan_edit",
+        json!({ "add": ["Phase 5", "cmake on the Mac", "Phase 6"] }),
+    );
+    let ids: Vec<i64> = (0..3).map(|i| added[i]["id"].as_i64().unwrap()).collect();
+    fixture.json("demo", "trail_plan_edit", json!({ "drop": [ids[1]] }));
+    let update = fixture.json(
+        "demo",
+        "trail_add",
+        json!({ "title": "T", "body": "B", "done": [ids[0]] }),
+    );
+
+    let open = fixture.json("demo", "trail_plan", json!({}));
+    assert_eq!(open.as_array().unwrap().len(), 1);
+    assert_eq!(open[0]["text"], "Phase 6");
+    let all = fixture.json("demo", "trail_plan", json!({ "all": true }));
+    assert_eq!(all[0]["state"], "done");
+    assert_eq!(all[0]["closed_by_update"], update["id"]);
+    assert_eq!(all[1]["state"], "dropped");
+    let status = fixture.json("demo", "trail_status", json!({}));
+    assert_eq!(status["plan"], open);
+
+    let (text, is_error) = fixture.call(
+        "demo",
+        "trail_plan_edit",
+        json!({ "add": ["Phase 7"], "done": [ids[0]] }),
+    );
+    assert!(is_error);
+    assert!(text.contains("already done"), "{text}");
+    assert_eq!(fixture.json("demo", "trail_plan", json!({})), open);
 }

@@ -4,12 +4,13 @@ use rusqlite::Connection;
 
 use crate::{
     core::{
+        plan::{check_open_items, close_items},
         project::CoreError,
         status::{UpdateInfo, update_info},
     },
     database::sqlite,
     git::repo::{self, Head},
-    types::{project::Project, update::UpdateDraft},
+    types::{plan::PlanState, project::Project, update::UpdateDraft},
 };
 
 pub fn git_context(dir: &Path) -> (Option<String>, Option<String>) {
@@ -29,6 +30,7 @@ pub fn add_update(
     title: &str,
     body: &str,
     next: Option<&str>,
+    done: &[i64],
 ) -> Result<UpdateInfo, CoreError> {
     if title.trim().is_empty() {
         return Err(CoreError::Invalid("title can't be empty".into()));
@@ -51,7 +53,12 @@ pub fn add_update(
         commit_sha,
     };
 
-    let id = sqlite::insert_update(conn, &draft)?;
+    // A bad plan item id rolls back the whole update.
+    let tx = sqlite::write_transaction(conn)?;
+    check_open_items(&tx, project, done)?;
+    let id = sqlite::insert_update(&tx, &draft)?;
+    close_items(&tx, done, PlanState::Done, Some(&id))?;
+    tx.commit()?;
     let update = sqlite::get_update(conn, &id)?;
     let info = update_info(update, Path::new(&project.directory));
     Ok(info)

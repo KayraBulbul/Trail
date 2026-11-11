@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::plan::PlanState;
 use std::{fs, path::PathBuf, process::Command};
 
 struct Fixture {
@@ -55,7 +56,7 @@ impl Drop for Fixture {
 fn non_git_update_is_saved_with_null_git_fields_and_default_next() {
     let fixture = Fixture::new();
 
-    let info = add_update(&fixture.conn, &fixture.project, "Title", "Body", None).unwrap();
+    let info = add_update(&fixture.conn, &fixture.project, "Title", "Body", None, &[]).unwrap();
 
     assert_eq!((info.title.as_str(), info.body.as_str()), ("Title", "Body"));
     assert_eq!(info.next, "None");
@@ -73,7 +74,7 @@ fn git_update_records_branch_and_head() {
     fixture.git(&["commit", "-q", "-m", "a"]);
     let head = fixture.git(&["rev-parse", "HEAD"]);
 
-    let info = add_update(&fixture.conn, &fixture.project, "T", "B", Some("Next")).unwrap();
+    let info = add_update(&fixture.conn, &fixture.project, "T", "B", Some("Next"), &[]).unwrap();
 
     assert_eq!(info.next, "Next");
     assert_eq!(info.branch.as_deref(), Some("main"));
@@ -100,10 +101,42 @@ fn blank_title_or_body_is_rejected_without_saving() {
         ("  ", "Body", "title can't be empty"),
         ("Title", "\n", "body can't be empty"),
     ] {
-        let error = add_update(&fixture.conn, &fixture.project, title, body, None)
+        let error = add_update(&fixture.conn, &fixture.project, title, body, None, &[])
             .err()
             .unwrap();
         assert_eq!(error.to_string(), message);
     }
     assert_eq!(fixture.saved_count(), 0);
+}
+
+#[test]
+fn done_items_are_closed_by_the_new_update_and_a_bad_id_saves_nothing() {
+    let fixture = Fixture::new();
+    let first = sqlite::insert_plan_item(&fixture.conn, "p", "First").unwrap();
+    let second = sqlite::insert_plan_item(&fixture.conn, "p", "Second").unwrap();
+
+    let error = add_update(
+        &fixture.conn,
+        &fixture.project,
+        "T",
+        "B",
+        None,
+        &[first, 999],
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.to_string(), "there's no plan item 999");
+    assert_eq!(fixture.saved_count(), 0);
+
+    let info = add_update(&fixture.conn, &fixture.project, "T", "B", None, &[first]).unwrap();
+
+    let closed = sqlite::get_plan_item(&fixture.conn, first)
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed.state, PlanState::Done);
+    assert_eq!(closed.closed_by_update, Some(info.id));
+    let open = sqlite::get_plan_item(&fixture.conn, second)
+        .unwrap()
+        .unwrap();
+    assert_eq!(open.state, PlanState::Open);
 }
