@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::{
     core::{
+        plan::{PlanEdit, edit_plan, plan},
         project::{CoreError, list_projects, resolve_project},
         status,
         update::add_update,
@@ -25,7 +26,7 @@ pub fn definitions() -> Value {
         {
             "name": "trail_status",
             "title": "Where work left off",
-            "description": "The project's latest update (what was done and what to do next) and its git state. Call this at the start of a session.",
+            "description": "The project's latest update (what was done and what to do next), its open plan items (the work still to do), and its git state. Call this at the start of a session.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -50,23 +51,52 @@ pub fn definitions() -> Value {
         {
             "name": "trail_add",
             "title": "Record an update",
-            "description": "Record what you did this session and what to do next. Call this at the end of a session. The current git branch and commit are saved with it. Updates can't be edited or deleted afterwards.",
+            "description": "Record what you did this session and what to do next. Call this at the end of a session. The current git branch and commit are saved with it. Updates can't be edited or deleted afterwards. Pass `done` to mark the plan items this session finished.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": PROJECT_ARGUMENT },
                     "title": { "type": "string", "description": "A short title for the update." },
                     "body": { "type": "string", "description": "What was done." },
-                    "next": { "type": "string", "description": "What to do next." }
+                    "next": { "type": "string", "description": "The immediate next step. Work that lasts beyond it belongs in the plan." },
+                    "done": { "type": "array", "items": { "type": "integer" }, "description": "Ids of open plan items this session finished." }
                 },
                 "required": ["title", "body"],
                 "additionalProperties": false
             }
         },
         {
+            "name": "trail_plan",
+            "title": "The plan",
+            "description": "The project's plan: the work still to do, in order. Open items only unless `all` is true.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": PROJECT_ARGUMENT },
+                    "all": { "type": "boolean", "default": false, "description": "Include done and dropped items." }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "trail_plan_edit",
+            "title": "Change the plan",
+            "description": "Add, finish or drop plan items, all at once or not at all. Items are pieces of work that take one or more sessions, not small TODOs: add one only when the user agrees to the work or it's left over from this session. Explain drops in your next update. To finish items while recording an update, pass `done` to trail_add instead.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": PROJECT_ARGUMENT },
+                    "add": { "type": "array", "items": { "type": "string" }, "description": "New items, one line each, added to the end of the plan." },
+                    "done": { "type": "array", "items": { "type": "integer" }, "description": "Ids of open items that are finished." },
+                    "drop": { "type": "array", "items": { "type": "integer" }, "description": "Ids of open items that won't be done." }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "trail_projects",
             "title": "List projects",
-            "description": "Every Trail project with its folder, whether it's a git repo, and its update count.",
+            "description": "Every Trail project with its folder, whether it's a git repo, its update count, and how many plan items are open.",
             "inputSchema": { "type": "object", "additionalProperties": false }
         }
     ])
@@ -92,6 +122,28 @@ struct AddArguments {
     title: String,
     body: String,
     next: Option<String>,
+    #[serde(default)]
+    done: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanArguments {
+    project: Option<String>,
+    #[serde(default)]
+    all: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanEditArguments {
+    project: Option<String>,
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    done: Vec<i64>,
+    #[serde(default)]
+    drop: Vec<i64>,
 }
 
 #[derive(Deserialize)]
@@ -123,8 +175,22 @@ pub fn call(conn: &Connection, cwd: &Path, name: &str, arguments: &Value) -> Opt
                 &args.title,
                 &args.body,
                 args.next.as_deref(),
+                &args.done,
             )?;
             Ok(to_json(&update))
+        }),
+        "trail_plan" => run(arguments, |args: PlanArguments| {
+            let project = find(conn, cwd, args.project)?;
+            Ok(to_json(&plan(conn, &project, args.all)?))
+        }),
+        "trail_plan_edit" => run(arguments, |args: PlanEditArguments| {
+            let project = find(conn, cwd, args.project)?;
+            let edit = PlanEdit {
+                add: &args.add,
+                done: &args.done,
+                drop: &args.drop,
+            };
+            Ok(to_json(&edit_plan(conn, &project, &edit)?))
         }),
         "trail_projects" => run(arguments, |_: NoArguments| {
             Ok(to_json(&list_projects(conn)?))

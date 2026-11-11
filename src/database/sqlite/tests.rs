@@ -65,4 +65,50 @@ fn migration_keeps_old_updates_and_old_style_inserts_working() {
     )
     .unwrap();
     assert_eq!(get_updates(&conn, "a").unwrap().len(), 2);
+    // The plan table is created for databases from before plans existed.
+    insert_plan_item(&conn, "a", "Item").unwrap();
+    assert_eq!(get_plan_items(&conn, "a").unwrap().len(), 1);
+}
+
+#[test]
+fn deleting_updates_and_projects_cleans_up_their_plan_items() {
+    let conn = Connection::open_in_memory().unwrap();
+    initialize_schema(&conn).unwrap();
+    let project = |name: &str| ProjectDraft {
+        name: Some(name.into()),
+        directory: Some(format!("/{name}")),
+    };
+    let (kept, deleted) = (
+        insert_project(&conn, &project("kept")).unwrap(),
+        insert_project(&conn, &project("deleted")).unwrap(),
+    );
+    let update = insert_update(
+        &conn,
+        &crate::types::update::UpdateDraft {
+            title: Some("T".into()),
+            project_id: Some(kept.clone()),
+            body: Some("B".into()),
+            next: Some("N".into()),
+            branch: None,
+            commit_sha: None,
+        },
+    )
+    .unwrap();
+    let item = insert_plan_item(&conn, &kept, "Finished").unwrap();
+    close_plan_item(&conn, item, PlanState::Done, Some(&update)).unwrap();
+    insert_plan_item(&conn, &deleted, "Gone").unwrap();
+
+    delete_update(&conn, &update).unwrap();
+    delete_project(&conn, &deleted).unwrap();
+
+    let item = get_plan_item(&conn, item).unwrap().unwrap();
+    assert_eq!((item.state, item.closed_by_update), (PlanState::Done, None));
+    let orphans: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM plan_items WHERE project_id = ?1",
+            [&deleted],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(orphans, 0);
 }

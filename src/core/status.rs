@@ -5,7 +5,10 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::{
-    core::project::CoreError,
+    core::{
+        plan::{PlanItemInfo, plan},
+        project::CoreError,
+    },
     database::sqlite,
     git::repo::{self, Head, commits_since},
     types::{project::Project, update::Update},
@@ -16,6 +19,8 @@ pub struct Status {
     pub project: ProjectInfo,
     pub git: Option<GitStatus>,
     pub latest_update: Option<UpdateInfo>,
+    /// Open plan items, in plan order.
+    pub plan: Vec<PlanItemInfo>,
 }
 
 #[derive(Serialize)]
@@ -96,6 +101,7 @@ pub fn status(conn: &Connection, project: &Project) -> Result<Status, CoreError>
         project: info,
         git,
         latest_update,
+        plan: plan(conn, project, false)?,
     })
 }
 

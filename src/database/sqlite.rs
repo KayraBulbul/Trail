@@ -1,10 +1,11 @@
 use std::{io, path::Path, time::Duration};
 
 use crate::types::{
+    plan::{PlanItem, PlanState},
     project::{Project, ProjectDraft},
     update::{Update, UpdateDraft},
 };
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, OptionalExtension, Result, Row};
 use uuid::Uuid;
 
 pub fn create_database() -> Result<Connection, Box<dyn std::error::Error>> {
@@ -55,6 +56,23 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
               next TEXT NOT NULL,
               created_at TEXT DEFAULT (datetime('now')),
               updated_at TEXT DEFAULT (datetime('now')),
+              FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )",
+        (),
+    )?;
+
+    // v1.1.0: a new table rather than new columns, so older binaries never see it.
+    // `id` is an integer so agents can type it: `trail plan done 7`.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS plan_items (
+              id INTEGER PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              text TEXT NOT NULL,
+              position INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'open',
+              created_at TEXT DEFAULT (datetime('now')),
+              closed_at TEXT,
+              closed_by_update TEXT,
               FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         )",
         (),
@@ -118,9 +136,11 @@ pub fn get_projects(conn: &Connection) -> Result<Vec<Project>> {
 }
 
 pub fn delete_project(conn: &Connection, project_id: &str) -> Result<()> {
-    conn.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
-
-    Ok(())
+    // Foreign keys are off on Trail's connections, so ON DELETE CASCADE doesn't run.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM plan_items WHERE project_id = ?1", [project_id])?;
+    tx.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+    tx.commit()
 }
 
 pub fn insert_update(conn: &Connection, update: &UpdateDraft) -> Result<String> {
@@ -205,7 +225,123 @@ pub fn edit_update(conn: &Connection, update: &Update) -> Result<()> {
 }
 
 pub fn delete_update(conn: &Connection, update_id: &str) -> Result<()> {
-    conn.execute("DELETE FROM updates WHERE id = ?1", [update_id])?;
+    // Items the update closed stay closed; they just lose the link to it.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE plan_items SET closed_by_update = NULL WHERE closed_by_update = ?1",
+        [update_id],
+    )?;
+    tx.execute("DELETE FROM updates WHERE id = ?1", [update_id])?;
+    tx.commit()
+}
+
+const PLAN_ITEM_COLUMNS: &str =
+    "id, project_id, text, position, state, created_at, closed_at, closed_by_update";
+
+fn plan_item(row: &Row) -> Result<PlanItem> {
+    Ok(PlanItem {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        text: row.get(2)?,
+        position: row.get(3)?,
+        state: PlanState::parse(&row.get::<_, String>(4)?),
+        created_at: row.get(5)?,
+        closed_at: row.get(6)?,
+        closed_by_update: row.get(7)?,
+    })
+}
+
+/// Adds an open item at the end of the project's plan.
+pub fn insert_plan_item(conn: &Connection, project_id: &str, text: &str) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO plan_items (project_id, text, position)
+              VALUES (?1, ?2, (SELECT COALESCE(MAX(position), 0) + 1
+                               FROM plan_items WHERE project_id = ?1))",
+        (project_id, text),
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+/// Every item in the project's plan, open and closed, in plan order.
+pub fn get_plan_items(conn: &Connection, project_id: &str) -> Result<Vec<PlanItem>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {PLAN_ITEM_COLUMNS} FROM plan_items
+              WHERE project_id = ?1
+              ORDER BY position ASC, id ASC"
+    ))?;
+
+    stmt.query_map([project_id], plan_item)?.collect()
+}
+
+pub fn get_plan_item(conn: &Connection, id: i64) -> Result<Option<PlanItem>> {
+    conn.query_row(
+        &format!("SELECT {PLAN_ITEM_COLUMNS} FROM plan_items WHERE id = ?1"),
+        [id],
+        plan_item,
+    )
+    .optional()
+}
+
+/// Marks an item done or dropped now. `update_id` is the update that closed it, if any.
+pub fn close_plan_item(
+    conn: &Connection,
+    id: i64,
+    state: PlanState,
+    update_id: Option<&str>,
+) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE plan_items
+              SET state = ?1, closed_at = datetime('now'), closed_by_update = ?2
+              WHERE id = ?3",
+        (state.as_str(), update_id, id),
+    )?;
+
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+pub fn reopen_plan_item(conn: &Connection, id: i64) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE plan_items
+              SET state = 'open', closed_at = NULL, closed_by_update = NULL
+              WHERE id = ?1",
+        [id],
+    )?;
+
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+pub fn edit_plan_item(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    let changed = conn.execute("UPDATE plan_items SET text = ?1 WHERE id = ?2", (text, id))?;
+
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Swaps two items' places in the plan.
+pub fn swap_plan_items(conn: &Connection, first: &PlanItem, second: &PlanItem) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE plan_items SET position = ?1 WHERE id = ?2",
+        (second.position, first.id),
+    )?;
+    tx.execute(
+        "UPDATE plan_items SET position = ?1 WHERE id = ?2",
+        (first.position, second.id),
+    )?;
+    tx.commit()
+}
+
+pub fn delete_plan_item(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM plan_items WHERE id = ?1", [id])?;
 
     Ok(())
 }
